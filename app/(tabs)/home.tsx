@@ -6,22 +6,22 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Button,
   RefreshControl,
 } from 'react-native';
-import YoutubePlayer from 'react-native-youtube-iframe';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import colors from '@/constants/colors';
 import { useApp } from '@/contexts/AppContext';
 import { useStreak } from '@/contexts/StreakContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Zap, Flame, Trophy, ListChecks, CheckCircle, Circle, Clock, Sparkles } from 'lucide-react-native';
+import { Zap, Flame, Trophy, ListChecks, CheckCircle, Circle, Clock, LayoutGrid, Sparkles, Plus, BookOpen, FileText } from 'lucide-react-native';
 import * as Sentry from '@sentry/react-native';
 import { formatStringTime12H } from '@/utils/timeUtils';
 import UpgradeModal from '@/components/UpgradeModal';
 import TrialCountdownModal from '@/components/TrialCountdownModal';
 import DailyStreakModal from '@/components/DailyStreakModal';
+import OnboardingTour from '@/components/OnboardingTour';
+import WidgetBottomSheet from '@/components/WidgetBottomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useResponsive } from '@/utils/responsive';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
@@ -29,7 +29,8 @@ import ResponsiveContainer from '@/components/ResponsiveContainer';
 export default function HomeScreen() {
   const ctx = useApp();
   const sortedTasks = ctx?.sortedTasks || [];
-  const videoConfig = ctx?.videoConfig;
+  const classes = ctx?.classes || [];
+  const notes = ctx?.notes || [];
   const isLoading = ctx?.isLoading;
   const refreshAllData = ctx?.refreshAllData;
   const initialLoadFailed = ctx?.initialLoadFailed ?? false;
@@ -57,6 +58,9 @@ export default function HomeScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [showTrialModal, setShowTrialModal] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+  const [showWidgetSheet, setShowWidgetSheet] = useState(false);
+  const [activeWidgets, setActiveWidgets] = useState<Set<string>>(new Set());
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -102,6 +106,45 @@ export default function HomeScreen() {
 
     checkTrialModal();
   }, [user, showDailyModal]);
+
+  useEffect(() => {
+    const checkOnboarding = async () => {
+      if (!user?.uid) return;
+      // Don't stack on top of the streak modal — wait until it closes
+      if (showDailyModal) return;
+      const key = `@onboarding_complete_${user.uid}`;
+      const done = await AsyncStorage.getItem(key);
+      if (!done) {
+        setShowTour(true);
+      }
+    };
+    checkOnboarding();
+  }, [user?.uid, showDailyModal]);
+
+  const completeTour = async () => {
+    setShowTour(false);
+    if (user?.uid) {
+      await AsyncStorage.setItem(`@onboarding_complete_${user.uid}`, 'true');
+    }
+  };
+
+  // Load persisted active widgets for this user
+  useEffect(() => {
+    if (!user?.uid) return;
+    AsyncStorage.getItem(`@active_widgets_${user.uid}`).then(val => {
+      if (val) setActiveWidgets(new Set(JSON.parse(val)));
+    });
+  }, [user?.uid]);
+
+  const handleWidgetsConfirm = useCallback(async (keys: string[]) => {
+    if (!keys.length) return;
+    const next = new Set([...activeWidgets, ...keys]);
+    setActiveWidgets(next);
+    if (user?.uid) {
+      await AsyncStorage.setItem(`@active_widgets_${user.uid}`, JSON.stringify(Array.from(next)));
+    }
+  }, [activeWidgets, user?.uid]);
+
   const lastFocusRef = React.useRef(0);
 
   // Refresh gamification points whenever coming back to this screen
@@ -147,6 +190,19 @@ export default function HomeScreen() {
       .filter(task => !task.completed)
       .slice(0, 3);
   }, [sortedTasks]);
+
+  // Latest 3 created classes for the widget
+  const recentClasses = useMemo(() => classes.slice(0, 3), [classes]);
+
+  // Latest 3 notes for the widget (notes are already newest-first from context)
+  const recentNotes = useMemo(() => notes.slice(0, 3), [notes]);
+
+  const formatNoteDate = useCallback((dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, []);
+
+  const firstName = user?.name ? user.name.split(' ')[0] : 'there';
 
   const getDaysUntil = useCallback((dateStr: string) => {
     // Parse as local date — never use new Date("YYYY-MM-DD") directly
@@ -209,37 +265,45 @@ export default function HomeScreen() {
             <Text style={[styles.appTitle, { fontSize: normalize(23) }]}>Cause Planner</Text>
             <Text style={[styles.heroSubtitle, { fontSize: normalize(14) }]}>Making a difference, one task at a time</Text>
 
+            <Text style={[styles.greetingText, { fontSize: normalize(18) }]}>Hello, {firstName} 👋</Text>
+
             <View style={[styles.statsGrid, isTablet && { gap: 16 }]}>
-              <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#E0F2FE' }]}>
-                <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
-                  <ListChecks size={normalize(20)} color={colors.primary} />
+              {/* Row 1 */}
+              <View style={styles.statsRow}>
+                <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#E0F2FE' }]}>
+                  <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
+                    <ListChecks size={normalize(28)} color={colors.primary} />
+                  </View>
+                  <Text style={[styles.statValue, { fontSize: normalize(22) }]}>{todayTasksInfo.remaining}</Text>
+                  <Text style={[styles.statLabel, { fontSize: normalize(13) }]}>Today's Tasks</Text>
                 </View>
-                <Text style={[styles.statValue, { fontSize: normalize(16) }]}>{todayTasksInfo.remaining}</Text>
-                <Text style={[styles.statLabel, { fontSize: normalize(9) }]}>Today's Tasks</Text>
+
+                <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#EFF6FF' }]}>
+                  <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
+                    <Flame size={normalize(28)} color={colors.secondary} />
+                  </View>
+                  <Text style={[styles.statValue, { fontSize: normalize(22) }]}>{streakData?.current || 0}</Text>
+                  <Text style={[styles.statLabel, { fontSize: normalize(13) }]}>Current Streak</Text>
+                </View>
               </View>
 
-              <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#EFF6FF' }]}>
-                <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
-                  <Flame size={normalize(20)} color={colors.secondary} />
+              {/* Row 2 */}
+              <View style={styles.statsRow}>
+                <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#DBEAFE' }]}>
+                  <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
+                    <Zap size={normalize(28)} color={colors.primaryLight} />
+                  </View>
+                  <Text style={[styles.statValue, { fontSize: normalize(22) }]}>{streakData?.points || 0}</Text>
+                  <Text style={[styles.statLabel, { fontSize: normalize(13) }]}>Total Points</Text>
                 </View>
-                <Text style={[styles.statValue, { fontSize: normalize(16) }]}>{streakData?.current || 0}</Text>
-                <Text style={[styles.statLabel, { fontSize: normalize(9) }]}>Current Streak</Text>
-              </View>
 
-              <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#DBEAFE' }]}>
-                <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
-                  <Zap size={normalize(20)} color={colors.primaryLight} />
+                <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#D1FAE5' }]}>
+                  <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
+                    <Trophy size={normalize(28)} color={colors.success} />
+                  </View>
+                  <Text style={[styles.statValue, { fontSize: normalize(22) }]}>{streakData?.level || 1}</Text>
+                  <Text style={[styles.statLabel, { fontSize: normalize(13) }]}>Levels</Text>
                 </View>
-                <Text style={[styles.statValue, { fontSize: normalize(16) }]}>{streakData?.points || 0}</Text>
-                <Text style={[styles.statLabel, { fontSize: normalize(9) }]}>Total Points</Text>
-              </View>
-
-              <View style={[styles.statBox, isTablet && styles.statBoxTablet, { backgroundColor: '#D1FAE5' }]}>
-                <View style={[styles.statIconContainer, { backgroundColor: 'white' }]}>
-                  <Trophy size={normalize(20)} color={colors.success} />
-                </View>
-                <Text style={[styles.statValue, { fontSize: normalize(16) }]}>{streakData?.level || 1}</Text>
-                <Text style={[styles.statLabel, { fontSize: normalize(9) }]}>Levels</Text>
               </View>
             </View>
 
@@ -269,34 +333,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.videoSection}>
-          <Text style={[styles.sectionTitle, { fontSize: normalize(20) }]}>College Life TV</Text>
-          <Text style={[styles.videoSubtitle, { fontSize: normalize(14) }]}>Lights, Camera, Win!  - Submit your vid for prizes</Text>
-          <View style={[styles.videoContainer, isTablet && { maxHeight: 400 }]}>
-            <YoutubePlayer
-              height={isTablet ? 360 : 190}
-              width={"100%"}
-              videoId={videoConfig?.homeVideoId || "VRSnKzgVTiU"}
-              play={false}
-              webViewProps={{
-                scrollEnabled: false,
-                overScrollMode: 'never',
-              }}
-            />
-          </View>
-          {videoConfig?.homeVideoTitle ? (
-            <Text style={[styles.dynamicVideoTitle, { fontSize: normalize(14) }]}>
-              <Text style={styles.videoMetaLabel}>Title: </Text>
-              {videoConfig.homeVideoTitle}
-            </Text>
-          ) : null}
-          {videoConfig?.homeVideoSchool ? (
-            <Text style={[styles.dynamicVideoTitle, { fontSize: normalize(14) }]}>
-              <Text style={styles.videoMetaLabel}>School: </Text>
-              {videoConfig.homeVideoSchool}
-            </Text>
-          ) : null}
-        </View>
 
         <View style={styles.quoteSection}>
           <Text style={[styles.quoteText, { fontSize: normalize(15) }]}>&ldquo;{currentQuote}&rdquo;</Text>
@@ -357,9 +393,170 @@ export default function HomeScreen() {
             </View>
           </View>
         )}
+
+        {/* Classes widget */}
+        {activeWidgets.has('classes') && (
+          <View style={styles.classesSection}>
+            <View style={styles.classesSectionHeader}>
+              <Text style={[styles.sectionTitle, { fontSize: normalize(20), textAlign: 'left' }]}>
+                <Text style={{ fontWeight: '800' }}>My Classes</Text>
+              </Text>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/classes')}>
+                <Text style={[styles.viewAllText, { fontSize: normalize(14) }]}>View All</Text>
+              </TouchableOpacity>
+            </View>
+
+            {recentClasses.length === 0 ? (
+              <View style={styles.classesEmptyState}>
+                <View style={styles.classesEmptyIconWrap}>
+                  <BookOpen size={28} color={colors.primary} />
+                </View>
+                <Text style={[styles.classesEmptyTitle, { fontSize: normalize(16) }]}>No classes yet</Text>
+                <Text style={[styles.classesEmptyText, { fontSize: normalize(13) }]}>
+                  Add your first class to see it here on your home screen.
+                </Text>
+                <TouchableOpacity
+                  style={styles.classesEmptyCTA}
+                  onPress={() => router.push('/(tabs)/classes')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.classesEmptyCTAText, { fontSize: normalize(14) }]}>Add a Class</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              recentClasses.map(cls => (
+                <TouchableOpacity
+                  key={cls.id}
+                  style={[styles.classCard, { borderLeftColor: cls.color }]}
+                  onPress={() => router.push('/(tabs)/classes')}
+                >
+                  <View style={[styles.classCardIcon, { backgroundColor: cls.color + '20' }]}>
+                    <BookOpen size={20} color={cls.color} />
+                  </View>
+                  <View style={styles.classCardContent}>
+                    <Text style={[styles.classCardName, { fontSize: normalize(15) }]} numberOfLines={1}>
+                      {cls.name}
+                    </Text>
+                    {cls.section ? (
+                      <Text style={[styles.classCardSection, { fontSize: normalize(12) }]}>{cls.section}</Text>
+                    ) : null}
+                    <View style={styles.classCardMetaRow}>
+                      <Clock size={12} color={colors.textLight} />
+                      <Text style={[styles.classCardMetaText, { fontSize: normalize(11) }]}>{cls.time}</Text>
+                    </View>
+                    <Text style={[styles.classCardDays, { fontSize: normalize(11) }]} numberOfLines={1}>
+                      {cls.daysOfWeek.join(', ')}
+                    </Text>
+                  </View>
+                  <View style={[styles.classColorDot, { backgroundColor: cls.color }]} />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        )}
+
+        {/* Notes widget */}
+        {activeWidgets.has('notes') && (
+          <View style={styles.notesSection}>
+            <View style={styles.notesSectionHeader}>
+              <Text style={[styles.sectionTitle, { fontSize: normalize(20), textAlign: 'left' }]}>
+                <Text style={{ fontWeight: '800' }}>My Notes</Text>
+              </Text>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/notes')}>
+                <Text style={[styles.viewAllText, { fontSize: normalize(14) }]}>View All</Text>
+              </TouchableOpacity>
+            </View>
+
+            {recentNotes.length === 0 ? (
+              <View style={styles.notesEmptyState}>
+                <View style={styles.notesEmptyIconWrap}>
+                  <FileText size={28} color={colors.primary} />
+                </View>
+                <Text style={[styles.notesEmptyTitle, { fontSize: normalize(16) }]}>No notes yet</Text>
+                <Text style={[styles.notesEmptyText, { fontSize: normalize(13) }]}>
+                  Start capturing your ideas and study notes here.
+                </Text>
+                <TouchableOpacity
+                  style={styles.notesEmptyCTA}
+                  onPress={() => router.push('/(tabs)/notes')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.notesEmptyCTAText, { fontSize: normalize(14) }]}>Add a Note</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              recentNotes.map(note => (
+                <TouchableOpacity
+                  key={note.id}
+                  style={styles.noteCard}
+                  onPress={() => router.push('/(tabs)/notes')}
+                >
+                  <View style={styles.noteCardIconWrap}>
+                    <FileText size={18} color={colors.primary} />
+                  </View>
+                  <View style={styles.noteCardContent}>
+                    <View style={styles.noteCardHeader}>
+                      <Text style={[styles.noteCardTitle, { fontSize: normalize(15) }]} numberOfLines={1}>
+                        {note.title}
+                      </Text>
+                      {note.className ? (
+                        <View style={styles.noteClassTag}>
+                          <Text style={[styles.noteClassTagText, { fontSize: normalize(10) }]}>{note.className}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    {note.content ? (
+                      <Text style={[styles.noteCardPreview, { fontSize: normalize(12) }]} numberOfLines={2}>
+                        {note.content}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.noteCardDate, { fontSize: normalize(11) }]}>
+                      {formatNoteDate(note.updatedAt)}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        )}
+
+        {/* Customize section */}
+        <View style={[styles.customizeSection, { width: width - 40 }]}>
+          {/* Top half — icon + title, pinned to bottom edge of this half */}
+          <View style={styles.customizeTop}>
+            <View style={styles.customizeIconWrap}>
+              <LayoutGrid size={20} color={colors.primary} />
+            </View>
+            <Text style={[styles.customizeTitle, { fontSize: normalize(17) }]}>Customize Your{'\n'}Experience</Text>
+          </View>
+
+          {/* Button — sits at the exact vertical centre */}
+          <TouchableOpacity style={styles.customizeAddButton} activeOpacity={0.8} onPress={() => setShowWidgetSheet(true)}>
+            <Plus size={28} color="white" />
+          </TouchableOpacity>
+
+          {/* Bottom half — subtitle, pinned to top edge of this half */}
+          <View style={styles.customizeBottom}>
+            <Text style={[styles.customizeSubtitle, { fontSize: normalize(12) }]}>Add widgets to personalize{'\n'}your home screen</Text>
+          </View>
+        </View>
+
       </ScrollView>
       </ResponsiveContainer>
 
+
+      {showTour && (
+        <OnboardingTour
+          visible={showTour}
+          onComplete={completeTour}
+        />
+      )}
+
+      <WidgetBottomSheet
+        visible={showWidgetSheet}
+        onClose={() => setShowWidgetSheet(false)}
+        onConfirm={handleWidgetsConfirm}
+      />
 
       <UpgradeModal
         visible={showUpgradeModal}
@@ -444,7 +641,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 20,
-    alignItems: 'center',
   },
   appTitle: {
     fontSize: 28,
@@ -459,37 +655,45 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
+  greetingText: {
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'left',
+    marginBottom: 10,
+  },
   statsGrid: {
+    flexDirection: 'column',
+    width: '100%',
+    gap: 10,
+  },
+  statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    width: '100%',
-    gap: 0,
+    gap: 10,
   },
   statBox: {
     backgroundColor: colors.surface,
     borderRadius: 12,
-    padding: 8,
+    padding: 12,
     alignItems: 'center',
-    width: '23.5%', // 4 columns side by side
+    flex: 1,
     shadowColor: colors.cardShadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
-    marginBottom: 10,
   },
   statBoxTablet: {
-    width: '22%',
     padding: 16,
     borderRadius: 16,
   },
   statIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   statValue: {
     fontSize: 16,
@@ -607,10 +811,6 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
   },
-  videoSection: {
-    paddingHorizontal: 20,
-    marginBottom: 24,
-  },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '700' as const,
@@ -618,37 +818,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     textAlign: "center",
   },
-  videoSubtitle: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: 12,
-    textAlign: "center",
-  },
-  videoContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: colors.cardShadow,
-    marginBottom: 12,
-  },
-  dynamicVideoTitle: {
-    fontSize: 14,
-    fontWeight: '400',
-    color: colors.text,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  videoMetaLabel: {
-    fontWeight: '700',
-    color: colors.text,
-  },
-  videoByline: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 4,
-  },
   importButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'center',
     backgroundColor: colors.surface,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -680,6 +853,265 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: colors.premium,
+  },
+  customizeSection: {
+    marginHorizontal: 20,
+    marginBottom: 24,
+    borderRadius: 20,
+    aspectRatio: 1,
+    borderWidth: 1.5,
+    borderColor: colors.primary + '25',
+    backgroundColor: colors.primary + '08',
+    alignItems: 'center',
+    padding: 24,
+  },
+  customizeTop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 20,
+    gap: 10,
+  },
+  customizeIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customizeTitle: {
+    fontWeight: '800',
+    color: colors.text,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  customizeBottom: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 20,
+  },
+  customizeSubtitle: {
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  customizeAddButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  classesSection: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  classesSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  classCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderLeftWidth: 4,
+    shadowColor: colors.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  classCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  classCardContent: {
+    flex: 1,
+    gap: 2,
+  },
+  classCardName: {
+    fontWeight: '700',
+    color: colors.text,
+  },
+  classCardSection: {
+    color: colors.textSecondary,
+  },
+  classCardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
+  classCardMetaText: {
+    color: colors.textLight,
+  },
+  classCardDays: {
+    color: colors.textSecondary,
+  },
+  classColorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginLeft: 8,
+  },
+  classesEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 8,
+  },
+  classesEmptyIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary + '12',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  classesEmptyTitle: {
+    fontWeight: '700',
+    color: colors.text,
+  },
+  classesEmptyText: {
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  notesSection: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  notesSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  noteCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    shadowColor: colors.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  noteCardIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    marginTop: 2,
+  },
+  noteCardContent: {
+    flex: 1,
+    gap: 4,
+  },
+  noteCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  noteCardTitle: {
+    fontWeight: '700',
+    color: colors.text,
+    flexShrink: 1,
+  },
+  noteClassTag: {
+    backgroundColor: colors.primary + '18',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  noteClassTagText: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  noteCardPreview: {
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  noteCardDate: {
+    color: colors.textLight,
+  },
+  notesEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 8,
+  },
+  notesEmptyIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary + '12',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  notesEmptyTitle: {
+    fontWeight: '700',
+    color: colors.text,
+  },
+  notesEmptyText: {
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  notesEmptyCTA: {
+    marginTop: 8,
+    backgroundColor: colors.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+  },
+  notesEmptyCTAText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  classesEmptyCTA: {
+    marginTop: 8,
+    backgroundColor: colors.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+  },
+  classesEmptyCTAText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });
 
