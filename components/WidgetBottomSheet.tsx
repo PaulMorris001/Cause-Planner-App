@@ -8,7 +8,7 @@ import {
     TouchableWithoutFeedback,
     Animated,
 } from 'react-native';
-import { BookOpen, FileText, Target, Bot, CalendarDays, X, Check } from 'lucide-react-native';
+import { BookOpen, FileText, Target, CalendarDays, X, Check } from 'lucide-react-native';
 import colors from '@/constants/colors';
 
 const SHEET_HEIGHT = 460;
@@ -27,7 +27,6 @@ const WIDGETS_ROW1: WidgetItem[] = [
 ];
 
 const WIDGETS_ROW2: WidgetItem[] = [
-    { key: 'ai_buddy', label: 'AI Buddy', iconBg: '#8B5CF6', Icon: Bot },
     { key: 'calendar', label: 'Calendar', iconBg: '#EF4444', Icon: CalendarDays },
 ];
 
@@ -35,6 +34,7 @@ interface WidgetBottomSheetProps {
     visible: boolean;
     onClose: () => void;
     onConfirm: (selectedKeys: string[]) => void;
+    activeWidgets?: Set<string>;
 }
 
 function WidgetCell({
@@ -67,16 +67,16 @@ function WidgetCell({
     );
 }
 
-export default function WidgetBottomSheet({ visible, onClose, onConfirm }: WidgetBottomSheetProps) {
+export default function WidgetBottomSheet({ visible, onClose, onConfirm, activeWidgets }: WidgetBottomSheetProps) {
     const [modalVisible, setModalVisible] = useState(false);
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const translateY = useRef(new Animated.Value(SHEET_HEIGHT)).current;
     const backdropOpacity = useRef(new Animated.Value(0)).current;
 
-    // Step 1: when parent opens, reset selection + animated values, then mount Modal
+    // Step 1: when parent opens, pre-populate with already-active widgets, then mount Modal
     useEffect(() => {
         if (visible) {
-            setSelectedKeys(new Set());
+            setSelectedKeys(new Set(activeWidgets));
             translateY.setValue(SHEET_HEIGHT);
             backdropOpacity.setValue(0);
             setModalVisible(true);
