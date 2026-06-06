@@ -44,18 +44,10 @@ const userSchema = new mongoose.Schema({
             default: 0,
         },
     },
-    stripeCustomerId: {
-        type: String,
-        default: null,
-    },
     subscriptionStatus: {
         type: String,
         enum: ['none', 'active', 'canceled', 'past_due'],
         default: 'none',
-    },
-    subscriptionId: {
-        type: String,
-        default: null,
     },
     expoPushToken: {
         type: String,
@@ -89,8 +81,6 @@ const userSchema = new mongoose.Schema({
 });
 
 // Indexes
-// Indexes handled by schema definitions
 // userSchema.index({ email: 1 });
-// userSchema.index({ stripeCustomerId: 1 });
 
 module.exports = mongoose.model('User', userSchema);

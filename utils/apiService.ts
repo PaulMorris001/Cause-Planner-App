@@ -7,6 +7,9 @@ import { auth } from '@/firebaseConfig';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "https://rork-cause-student-ai-planner.onrender.com";
 const API_KEY = process.env.EXPO_PUBLIC_API_KEY || "";
 
+const API_TIMEOUT_MS   = 30_000; // default timeout for most API calls (30 s)
+const QUICK_TIMEOUT_MS = 10_000; // shorter timeout for fast/lightweight calls (10 s)
+
 // Helper to build headers with API key + Firebase token
 async function buildAuthHeaders(extra: Record<string, string> = {}): Promise<Record<string, string>> {
 	let token = '';
@@ -146,7 +149,7 @@ class ApiService {
 						name,
 					}),
 				},
-				10000 // 10 second timeout
+				QUICK_TIMEOUT_MS
 			);
 
 			if (!response.ok) {
@@ -178,7 +181,7 @@ class ApiService {
 					headers: await buildAuthHeaders(),
 					body: JSON.stringify({ email, name }),
 				},
-				10000
+				QUICK_TIMEOUT_MS
 			);
 
 			if (!response.ok) {
@@ -554,7 +557,7 @@ class ApiService {
 						...(token ? { "Authorization": `Bearer ${token}` } : {}),
 					},
 				},
-				30000
+				API_TIMEOUT_MS
 			);
 
 			if (!response.ok) {
@@ -590,7 +593,7 @@ class ApiService {
 					headers: await buildAuthHeaders(),
 					body: JSON.stringify(data),
 				},
-				30000
+				API_TIMEOUT_MS
 			);
 
 			if (!response.ok) {
@@ -620,7 +623,7 @@ class ApiService {
 					method: "DELETE",
 					headers: await buildAuthHeaders(),
 				},
-				30000
+				API_TIMEOUT_MS
 			);
 
 			if (!response.ok) {
@@ -651,7 +654,7 @@ class ApiService {
 					headers: await buildAuthHeaders(),
 					body: JSON.stringify(data),
 				},
-				30000
+				API_TIMEOUT_MS
 			);
 
 			if (!response.ok) {
@@ -668,41 +671,6 @@ class ApiService {
 			throw error;
 		}
 	}
-
-	/**
-	 * Create Stripe subscription
-	 */
-	async createSubscription(userId: string, priceId: string) {
-		try {
-			console.log(`[API] Creating Stripe subscription for user ${userId}`);
-			const response = await fetchWithTimeout(
-				`${API_BASE_URL}/api/stripe/create-subscription`,
-				{
-					method: "POST",
-					headers: await buildAuthHeaders(),
-					body: JSON.stringify({ userId, priceId }),
-				},
-				30000
-			);
-
-			if (!response.ok) {
-				const error = await response.json();
-				console.log("[API] Subscription creation error:", error);
-				return { 
-					success: false, 
-					error: error.error || "Failed to create subscription",
-					details: error.details
-				};
-			}
-
-			const result = await response.json();
-			return { success: true, ...result };
-		} catch (error: any) {
-			console.error("[API] Subscription creation error:", error);
-			return { success: false, error: error.message || String(error) };
-		}
-	}
-
 
 	/**
 	 * Parse syllabus document
@@ -755,139 +723,6 @@ class ApiService {
 		}
 	}
 
-	/**
-	 * Create Payment Intent (for one-time payment)
-	 */
-
-	async createPaymentIntent(userId: string, amount: number) {
-		try {
-			console.log(`[API] Creating payment intent for user ${userId}, amount: ${amount}`);
-			const response = await fetchWithTimeout(
-				`${API_BASE_URL}/api/stripe/create-payment-intent`,
-				{
-					method: "POST",
-					headers: await buildAuthHeaders(),
-					body: JSON.stringify({ userId, amount }),
-				},
-				30000
-			);
-
-			if (!response.ok) {
-				let errorMessage = "Failed to create payment intent";
-				try {
-					const error = await response.json();
-					console.log("[API] Payment intent error JSON:", error);
-					errorMessage = error.error || errorMessage;
-				} catch (e) {
-					const text = await response.text();
-					console.log("[API] Payment intent error text:", text);
-					errorMessage = text || errorMessage;
-				}
-				return { success: false, error: errorMessage };
-			}
-
-			try {
-				const result = await response.json();
-				return { success: true, ...result };
-			} catch (e) {
-				const text = await response.text();
-				console.error("[API] Payment intent result parse error:", text);
-				return { success: false, error: "Invalid server response", details: text };
-			}
-		} catch (error: any) {
-			console.error("[API] Payment intent error:", error);
-			return { success: false, error: error.message || String(error) };
-		}
-	}
-
-	/**
-	 * Cancel Stripe subscription
-	 */
-	async cancelSubscription(subscriptionId: string, userId: string) {
-		try {
-			console.log(`[API] Cancelling subscription ${subscriptionId}`);
-			const response = await fetchWithTimeout(
-				`${API_BASE_URL}/api/stripe/cancel-subscription`,
-				{
-					method: "POST",
-					headers: await buildAuthHeaders(),
-					body: JSON.stringify({ subscriptionId }),
-				},
-				30000
-			);
-
-			if (!response.ok) {
-				let errorMessage = "Failed to cancel subscription";
-				try {
-					const error = await response.json();
-					console.log("[API] Subscription cancellation error JSON:", error);
-					errorMessage = error.error || errorMessage;
-				} catch (e) {
-					const text = await response.text();
-					console.log("[API] Subscription cancellation error text:", text);
-					errorMessage = text || errorMessage;
-				}
-				return { success: false, error: errorMessage };
-			}
-
-			try {
-				const result = await response.json();
-				console.log("[API] Subscription cancelled:", result);
-				return result;
-			} catch (e) {
-				const text = await response.text();
-				console.error("[API] Subscription cancellation parse error:", text);
-				return { success: false, error: "Invalid server response", details: text };
-			}
-		} catch (error: any) {
-			console.error("[API] Subscription cancellation error:", error.message || error);
-			return { success: false, error: error.message || String(error) };
-		}
-	}
-
-	/**
-	 * Get user subscriptions
-	 */
-	async getUserSubscriptions(userId: string) {
-		try {
-			console.log(`[API] Getting subscriptions for user ${userId}`);
-			const response = await fetchWithTimeout(
-				`${API_BASE_URL}/api/stripe/user-subscriptions/${userId}`,
-				{
-					method: "GET",
-					headers: await buildAuthHeaders(),
-				},
-				30000
-			);
-
-			if (!response.ok) {
-				let errorMessage = "Failed to get subscriptions";
-				try {
-					const error = await response.json();
-					console.log("[API] Get subscriptions error JSON:", error);
-					errorMessage = error.error || errorMessage;
-				} catch (e) {
-					const text = await response.text();
-					console.log("[API] Get subscriptions error text:", text);
-					errorMessage = text || errorMessage;
-				}
-				return { success: false, error: errorMessage };
-			}
-
-			try {
-				const result = await response.json();
-				console.log("[API] Subscriptions retrieved:", result);
-				return result;
-			} catch (e) {
-				const text = await response.text();
-				console.error("[API] Get subscriptions parse error:", text);
-				return { success: false, error: "Invalid server response", details: text };
-			}
-		} catch (error: any) {
-			console.error("[API] Get subscriptions error:", error.message || error);
-			return { success: false, error: error.message || String(error) };
-		}
-	}
 }
 
 export const apiService = new ApiService();

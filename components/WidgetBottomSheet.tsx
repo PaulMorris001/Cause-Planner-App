@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { BookOpen, FileText, Target, CalendarDays, X, Check } from 'lucide-react-native';
 import colors from '@/constants/colors';
+import widgetColors from '@/constants/widgetColors';
 
 const SHEET_HEIGHT = 460;
 
@@ -21,13 +22,13 @@ interface WidgetItem {
 }
 
 const WIDGETS_ROW1: WidgetItem[] = [
-    { key: 'classes',  label: 'Classes',  iconBg: '#2563EB', Icon: BookOpen },
-    { key: 'notes',    label: 'Notes',    iconBg: '#10B981', Icon: FileText },
-    { key: 'goals',    label: 'Goals',    iconBg: '#F59E0B', Icon: Target },
+    { key: 'classes',  label: 'Classes',  iconBg: widgetColors.classes,  Icon: BookOpen },
+    { key: 'notes',    label: 'Notes',    iconBg: widgetColors.notes,    Icon: FileText },
+    { key: 'goals',    label: 'Goals',    iconBg: widgetColors.goals,    Icon: Target },
 ];
 
 const WIDGETS_ROW2: WidgetItem[] = [
-    { key: 'calendar', label: 'Calendar', iconBg: '#EF4444', Icon: CalendarDays },
+    { key: 'calendar', label: 'Calendar', iconBg: widgetColors.calendar, Icon: CalendarDays },
 ];
 
 interface WidgetBottomSheetProps {

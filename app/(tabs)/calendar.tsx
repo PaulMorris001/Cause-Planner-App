@@ -12,11 +12,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { formatStringTime12H } from '@/utils/timeUtils';
+import { getMonthDays, getTasksForDate, getClassesForDate } from '@/utils/calendarUtils';
 import colors from '@/constants/colors';
 import { useApp } from '@/contexts/AppContext';
 import * as Analytics from '@/utils/analytics';
 import { useResponsive } from '@/utils/responsive';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
+
+const CALENDAR_CELL_WIDTH = '14.28%' as const; // 100% ÷ 7 days
 
 type ViewMode = 'month' | 'week' | 'day';
 
@@ -67,24 +70,6 @@ export default function CalendarScreen() {
     setCurrentDate(newDate);
   };
 
-  const getMonthDays = (date: Date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startDayOfWeek = firstDay.getDay();
-
-    const days = [];
-    for (let i = 0; i < startDayOfWeek; i++) {
-      days.push(null);
-    }
-    for (let i = 1; i <= daysInMonth; i++) {
-      days.push(new Date(year, month, i));
-    }
-    return days;
-  };
-
   const getWeekDays = (date: Date) => {
     const days = [];
     const startOfWeek = new Date(date);
@@ -98,53 +83,6 @@ export default function CalendarScreen() {
     return days;
   };
 
-  const getTasksForDate = (date: Date | null) => {
-    if (!date) return [];
-    // Format date in local timezone to avoid UTC conversion issues
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const dateStr = `${year}-${month}-${day}`;
-    return sortedTasks.filter(task => task.dueDate === dateStr);
-  };
-
-  const getClassesForDate = (date: Date | null) => {
-    if (!date) return [];
-    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-
-    const filtered = classes.filter(cls => {
-      // Check if the class occurs on this day of the week
-      if (!cls.daysOfWeek.includes(dayName)) return false;
-
-      // Parse start and end dates (YYYY-MM-DD) as local dates
-      const [sYear, sMonth, sDay] = cls.startDate.split('-').map(Number);
-      const classStart = new Date(sYear, sMonth - 1, sDay, 0, 0, 0, 0);
-
-      const [eYear, eMonth, eDay] = cls.endDate.split('-').map(Number);
-      const classEnd = new Date(eYear, eMonth - 1, eDay, 23, 59, 59, 999);
-
-      // Create a date at midnight for comparison
-      const checkDate = new Date(date);
-      checkDate.setHours(0, 0, 0, 0);
-
-      // Check if the date falls within the class date range
-      const inRange = checkDate >= classStart && checkDate <= classEnd;
-
-      // Debug logging
-      if (inRange) {
-        console.log(`✅ Class "${cls.name}" matches ${dayName} ${date.toLocaleDateString()}`);
-      }
-
-      return inRange;
-    });
-
-    // Deduplicate by class ID
-    const uniqueClasses = Array.from(
-      new Map(filtered.map(cls => [cls.id, cls])).values()
-    );
-
-    return uniqueClasses;
-  };
 
   const renderMonthView = () => {
     const days = getMonthDays(currentDate);
@@ -159,8 +97,8 @@ export default function CalendarScreen() {
         </View>
         <View style={styles.daysGrid}>
           {days.map((day, index) => {
-            const tasks = getTasksForDate(day);
-            const dayClasses = getClassesForDate(day);
+            const tasks = getTasksForDate(day, sortedTasks);
+            const dayClasses = getClassesForDate(day, classes);
             const isToday = day && day.toDateString() === new Date().toDateString();
             const isSelected = day && selectedDate && day.toDateString() === selectedDate.toDateString();
 
@@ -221,8 +159,8 @@ export default function CalendarScreen() {
     return (
       <ScrollView style={[styles.weekView, isTablet && { paddingHorizontal: 40 }]}>
         {days.map((day) => {
-          const tasks = getTasksForDate(day);
-          const dayClasses = getClassesForDate(day);
+          const tasks = getTasksForDate(day, sortedTasks);
+          const dayClasses = getClassesForDate(day, classes);
           const isToday = day.toDateString() === new Date().toDateString();
 
           return (
@@ -259,8 +197,8 @@ export default function CalendarScreen() {
   };
 
   const renderDayView = () => {
-    const tasks = getTasksForDate(currentDate);
-    const dayClasses = getClassesForDate(currentDate);
+    const tasks = getTasksForDate(currentDate, sortedTasks);
+    const dayClasses = getClassesForDate(currentDate, classes);
 
     return (
       <ScrollView style={[styles.dayView, isTablet && { paddingHorizontal: 40 }]}>
@@ -435,8 +373,8 @@ export default function CalendarScreen() {
             </View>
             <View style={styles.selectedDayContent}>
               {(() => {
-                const tasks = getTasksForDate(selectedDate);
-                const dayClasses = getClassesForDate(selectedDate);
+                const tasks = getTasksForDate(selectedDate, sortedTasks);
+                const dayClasses = getClassesForDate(selectedDate, classes);
 
                 return (
                   <>
@@ -625,7 +563,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   dayCell: {
-    width: '14.28%',
+    width: CALENDAR_CELL_WIDTH,
     aspectRatio: 1,
     padding: 4,
   },

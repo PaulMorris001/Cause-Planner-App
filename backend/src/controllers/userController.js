@@ -5,7 +5,6 @@ const Class = require('../models/Class');
 const Note = require('../models/Note');
 const Goal = require('../models/Goal');
 const StudyGroup = require('../models/StudyGroup');
-const Subscription = require('../models/Subscription');
 
 const deleteUser = async (req, res) => {
 	try {
@@ -113,7 +112,6 @@ const deleteUser = async (req, res) => {
 			Class.deleteMany({ userId }),
 			Note.deleteMany({ userId }),
 			Goal.deleteMany({ userId }),
-			Subscription.deleteMany({ userId }),
 		]);
 
 		console.log(`✓ Deleted all data for user ${userId}`);

@@ -32,7 +32,6 @@ import {
   HelpCircle,
   Mail,
   AlertTriangle,
-  ArrowLeft,
   Check,
   Sparkles,
   Zap,
@@ -46,32 +45,20 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import apiService from '@/utils/apiService';
 // TextInput is imported from react-native above
 import { TERMS_AND_CONDITIONS, PRIVACY_POLICY } from '@/constants/LegalText';
-import { useStripe } from '@stripe/stripe-react-native';
 import * as Analytics from '@/utils/analytics';
 import { APPLE_PRODUCT_IDS, ANDROID_PRODUCT_IDS, purchaseSubscription, restorePurchases, initIAP, endIAP } from '@/utils/iapService';
 import { useResponsive } from '@/utils/responsive';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
-
-const SUBSCRIPTION_PLANS = {
-  standardMonthly: 'price_1ShIc8P0t2AuYFqK2waTumLy',
-  standardYearly: 'price_1Sl6k0P0t2AuYFqKrlQXkYUq',
-  premiumMonthly: 'price_1Sl6opP0t2AuYFqKRMdGp5kO',
-  premiumYearly: 'price_1Sl6piP0t2AuYFqKnKhrNQRg',
-  unlimitedMonthly: 'price_1Sl6rWP0t2AuYFqKshMpasoI',
-  unlimitedYearly: 'price_1Sl6sFP0t2AuYFqK2JYnhp6N',
-};
 
 // type SubscriptionTier = 'free' | 'standard' | 'premium' | 'unlimited';
 
 export default function AccountScreen() {
   const [currentSubscription, setCurrentSubscription] = useState<SubscriptionTier>('free');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [activeSubscription, setActiveSubscription] = useState<any>(null);
   const [loadingSubscription, setLoadingSubscription] = useState(true);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const { user, logout, changePassword, currentTier } = useAuth();
   const router = useRouter();
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const insets = useSafeAreaInsets();
 
   // Change Password State
@@ -193,62 +180,12 @@ export default function AccountScreen() {
 
   const { isTablet, normalize } = useResponsive();
 
-  const fetchSubscription = async () => {
-    if (!user?.uid) return;
-
-    try {
-      setLoadingSubscription(true);
-
-      // iOS uses Apple IAP — tier is stored in our backend, reflected in currentTier
-      if (Platform.OS === 'ios') {
-        setCurrentSubscription(currentTier as SubscriptionTier);
-        return;
-      }
-
-      const response = await apiService.getUserSubscriptions(user.uid);
-
-      if (response.success && response.subscriptions && response.subscriptions.length > 0) {
-        // Get the most recent active subscription
-        const activeSub = response.subscriptions.find(
-          (sub: any) => sub.status === 'active' || sub.status === 'trialing'
-        );
-
-        if (activeSub) {
-          setActiveSubscription(activeSub);
-          // Determine tier based on price ID
-          const priceId = activeSub.priceId;
-          if (priceId === SUBSCRIPTION_PLANS.standardMonthly || priceId === SUBSCRIPTION_PLANS.standardYearly) {
-            setCurrentSubscription('standard');
-          } else if (priceId === SUBSCRIPTION_PLANS.premiumMonthly || priceId === SUBSCRIPTION_PLANS.premiumYearly) {
-            setCurrentSubscription('premium');
-          } else if (priceId === SUBSCRIPTION_PLANS.unlimitedMonthly || priceId === SUBSCRIPTION_PLANS.unlimitedYearly) {
-            setCurrentSubscription('unlimited');
-          }
-        } else {
-          // No active Stripe subscription — use the tier from AuthContext
-          // (covers test accounts and any tier granted outside of Stripe)
-          setCurrentSubscription(currentTier as SubscriptionTier);
-        }
-      } else {
-        // No subscriptions at all — fall back to AuthContext tier
-        setCurrentSubscription(currentTier as SubscriptionTier);
-      }
-    } catch (error) {
-      console.error('Error fetching subscription:', error);
-      // On error, still reflect the AuthContext tier so test accounts show correctly
-      setCurrentSubscription(currentTier as SubscriptionTier);
-    } finally {
-      setLoadingSubscription(false);
-    }
+  const fetchSubscription = () => {
+    setCurrentSubscription(currentTier as SubscriptionTier);
+    setLoadingSubscription(false);
   };
 
-  const handleManagePayment = () => {
-    // Navigate to payment screen instead of showing modal
-    router.push('/payment');
-  };
-
-  const handleCancelSubscription = async () => {
-    // iOS: subscriptions are managed by Apple
+  const handleCancelSubscription = () => {
     if (Platform.OS === 'ios') {
       Alert.alert(
         'Cancel Subscription',
@@ -258,107 +195,55 @@ export default function AccountScreen() {
           { text: 'Open Settings', onPress: () => Linking.openURL('https://apps.apple.com/account/subscriptions') },
         ]
       );
-      return;
+    } else {
+      Alert.alert(
+        'Cancel Subscription',
+        'To cancel, go to Google Play Store → Subscriptions → Cause Planner.',
+        [
+          { text: 'OK' },
+          { text: 'Open Play Store', onPress: () => Linking.openURL('https://play.google.com/store/account/subscriptions') },
+        ]
+      );
     }
-
-    if (!activeSubscription || !user?.uid) return;
-
-    Alert.alert(
-      'Cancel Subscription',
-      'Are you sure you want to cancel your subscription? You will retain access until the end of your billing period.',
-      [
-        { text: 'Keep Subscription', style: 'cancel' },
-        {
-          text: 'Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const response = await apiService.cancelSubscription(
-                activeSubscription._id,
-                user.uid
-              );
-
-              if (response.success) {
-                Alert.alert('Success', 'Your subscription has been cancelled.');
-                fetchSubscription(); // Refresh subscription status
-              } else {
-                Alert.alert('Error', response.error || 'Failed to cancel subscription');
-              }
-            } catch (error) {
-              console.error('Error cancelling subscription:', error);
-              Alert.alert('Error', 'Failed to cancel subscription');
-            }
-          },
-        },
-      ]
-    );
   };
 
   const handleUpgrade = async (tier: 'standard' | 'premium' | 'unlimited', interval: 'monthly' | 'yearly') => {
     if (!user?.uid) return;
 
     const prices: Record<string, number> = {
-      'standard-monthly': 7.99, 'standard-yearly': 49.99,
-      'premium-monthly': 14.99, 'premium-yearly': 99.99,
+      'standard-monthly': 7.99,  'standard-yearly': 49.99,
+      'premium-monthly':  14.99, 'premium-yearly':  99.99,
       'unlimited-monthly': 29.99, 'unlimited-yearly': 184.99,
     };
     const planLabel = `${tier}-${interval}`;
+    const isIOS = Platform.OS === 'ios';
 
-    // ── iOS: Apple In-App Purchase ──────────────────────────────────────────
-    if (Platform.OS === 'ios') {
-      const appleKeyMap: Record<string, keyof typeof APPLE_PRODUCT_IDS> = {
-        'standard-monthly': 'standardMonthly',
-        'standard-yearly': 'standardYearly',
-        'premium-monthly': 'premiumMonthly',
-        'premium-yearly': 'premiumYearly',
-        'unlimited-monthly': 'unlimitedMonthly',
-        'unlimited-yearly': 'unlimitedYearly',
-      };
-      const productId = APPLE_PRODUCT_IDS[appleKeyMap[planLabel]];
-      if (!productId) { Alert.alert('Error', 'Invalid plan selected.'); return; }
+    // Resolve the platform-specific store product ID
+    const productId = isIOS
+      ? APPLE_PRODUCT_IDS[({
+          'standard-monthly':  'standardMonthly',
+          'standard-yearly':   'standardYearly',
+          'premium-monthly':   'premiumMonthly',
+          'premium-yearly':    'premiumYearly',
+          'unlimited-monthly': 'unlimitedMonthly',
+          'unlimited-yearly':  'unlimitedYearly',
+        } as Record<string, keyof typeof APPLE_PRODUCT_IDS>)[planLabel]]
+      : ANDROID_PRODUCT_IDS[planLabel];
 
-      setLoadingPlan(planLabel);
-      try {
-        Analytics.logCustomEvent('payment_flow_started', { tier, interval, platform: 'ios' });
-        const result = await purchaseSubscription(productId);
-
-        if (result.success && result.tier) {
-          await apiService.post('/api/iap/activate', {
-            userId: user.uid,
-            productId,
-            receiptData: result.purchase?.purchaseToken,
-          });
-          setCurrentSubscription(result.tier);
-          setShowPaymentModal(false);
-          Analytics.logRevenue(prices[planLabel] || 0, 'USD');
-          Alert.alert('Success!', 'Thank you for subscribing to Cause Planner!');
-        } else if (result.error && result.error !== 'cancelled') {
-          Alert.alert('Purchase Failed', result.error);
-        }
-      } catch (error: any) {
-        Alert.alert('Error', error.message || 'Purchase failed. Please try again.');
-      } finally {
-        setLoadingPlan(null);
-      }
-      return;
-    }
-
-    // ── Android: Google Play IAP ─────────────────────────────────────────────
-    const androidProductId = ANDROID_PRODUCT_IDS[planLabel];
-    if (!androidProductId) { Alert.alert('Error', 'Invalid plan selected.'); return; }
+    if (!productId) { Alert.alert('Error', 'Invalid plan selected.'); return; }
 
     setLoadingPlan(planLabel);
     try {
-      Analytics.logCustomEvent('payment_flow_started', { tier, interval, platform: 'android' });
-      const result = await purchaseSubscription(androidProductId);
+      Analytics.logCustomEvent('payment_flow_started', { tier, interval, platform: isIOS ? 'ios' : 'android' });
+      const result = await purchaseSubscription(productId);
 
       if (result.success && result.tier) {
-        await apiService.post('/api/iap/activate', {
-          userId: user.uid,
-          productId: androidProductId,
-          platform: 'android',
-          purchaseToken: result.purchase?.purchaseToken,
-        });
+        // Payload differs slightly between platforms
+        const activatePayload = isIOS
+          ? { userId: user.uid, productId, receiptData: result.purchase?.purchaseToken }
+          : { userId: user.uid, productId, platform: 'android', purchaseToken: result.purchase?.purchaseToken };
+
+        await apiService.post('/api/iap/activate', activatePayload);
         setCurrentSubscription(result.tier);
         setShowPaymentModal(false);
         Analytics.logRevenue(prices[planLabel] || 0, 'USD');
@@ -375,15 +260,9 @@ export default function AccountScreen() {
 
 
 
-  const handleViewPrivacyPolicy = () => {
-    console.log('Opening Privacy Modal');
-    setShowPrivacyModal(true);
-  };
+  const handleViewPrivacyPolicy = () => setShowPrivacyModal(true);
 
-  const handleViewTerms = () => {
-    console.log('Opening Terms Modal');
-    setShowTermsModal(true);
-  };
+  const handleViewTerms = () => setShowTermsModal(true);
 
   const handleDeleteAccount = () => {
     setDeleteStep(1);
@@ -589,7 +468,7 @@ export default function AccountScreen() {
             <ChevronRight size={20} color={colors.textLight} />
           </TouchableOpacity>
 
-          {(Platform.OS === 'ios' ? currentSubscription !== 'free' : !!activeSubscription) && (
+          {currentSubscription !== 'free' && (
             <TouchableOpacity style={styles.menuItem} onPress={handleCancelSubscription}>
               <View style={styles.menuItemLeft}>
                 <View style={[styles.menuIcon, { backgroundColor: '#FF3B3020' }]}>

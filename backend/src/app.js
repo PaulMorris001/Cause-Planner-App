@@ -18,8 +18,6 @@ const studyGroupsRoutes = require("./routes/studyGroupsRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const userRoutes = require("./routes/userRoutes");
 const gamificationRoutes = require("./routes/gamificationRoutes");
-const stripeRoutes = require("./routes/stripeRoutes");
-
 const uploadRoutes = require("./routes/uploadRoutes");
 const notifyRoutes = require("./routes/notifyRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -172,10 +170,6 @@ const uploadLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, max: 20,
 	handler: (req, res) => res.status(429).json({ success: false, error: "Too many upload requests." })
 });
-const stripeLimiter = rateLimit({
-	windowMs: 15 * 60 * 1000, max: 20,
-	handler: (req, res) => res.status(429).json({ success: false, error: "Too many payment requests." })
-});
 const aiLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, max: 30,
 	handler: (req, res) => res.status(429).json({ success: false, error: "Too many AI requests." })
@@ -306,9 +300,6 @@ app.use("/api/goals", authenticate, goalsRoutes);
 app.use("/api/study-groups", authenticate, studyGroupsRoutes);
 app.use("/api/admin", adminLimiter, authenticate, adminRoutes);
 app.use("/api/gamification", authenticate, gamificationRoutes);
-
-// Stripe Routes
-app.use("/api/stripe", stripeLimiter, authenticate, stripeRoutes);
 
 // User routes (needs authenticate in the routes where not verified by firebase token)
 app.use("/api/users", authenticate, userRoutes);

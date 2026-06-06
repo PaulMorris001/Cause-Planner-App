@@ -32,6 +32,9 @@ export const ANDROID_PRODUCT_IDS: Record<string, string> = {
   'unlimited-yearly': 'com.causeplanner.unlimited_yearly',
 };
 
+// How long to wait for the App Store / Play Store before giving up on a purchase
+const PURCHASE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 const TIER_MAP: Record<string, IAPTier> = {
   // iOS product IDs
   Standardmonth1: 'standard',
@@ -129,7 +132,7 @@ function purchaseSubscriptionIOS(productId: string): Promise<PurchaseResult> {
 
     timeoutId = setTimeout(() => {
       settle({ success: false, error: 'Purchase timed out. Please try again.' });
-    }, 5 * 60 * 1000);
+    }, PURCHASE_TIMEOUT_MS);
 
     requestPurchase({
       request: { apple: { sku: productId } },
@@ -149,7 +152,7 @@ async function purchaseSubscriptionAndroid(productId: string): Promise<PurchaseR
   let offerToken: string | undefined;
   try {
     const products = await fetchProducts({ skus: [productId], type: 'subs' });
-    const sub = products[0] as any;
+    const sub = products?.[0] as any;
     offerToken =
       sub?.subscriptionOffers?.[0]?.offerToken ??
       sub?.subscriptionOfferDetailsAndroid?.[0]?.offerToken;
@@ -197,7 +200,7 @@ async function purchaseSubscriptionAndroid(productId: string): Promise<PurchaseR
 
     timeoutId = setTimeout(() => {
       settle({ success: false, error: 'Purchase timed out. Please try again.' });
-    }, 5 * 60 * 1000);
+    }, PURCHASE_TIMEOUT_MS);
 
     requestPurchase({
       request: {

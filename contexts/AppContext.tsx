@@ -1,3 +1,22 @@
+/**
+ * AppContext — central data store for the Cause Student Planner app.
+ *
+ * Manages and exposes:
+ *   - Tasks        — create, read, update, delete; calendar sync; notifications
+ *   - Classes      — create, read, update, delete; calendar sync
+ *   - Notes        — create, read, update, delete
+ *   - Goals        — create, read, update, delete; habit sub-tasks; notifications
+ *   - Study Groups — real-time via WebSocket (create, join, message, membership)
+ *   - Video Config — remote Firestore config for home/causes screen videos & essays
+ *   - Calendar Sync — toggle & bulk-sync tasks/classes to the device calendar
+ *   - Offline Queue — queued operations that retry when the backend comes back online
+ *   - Sync errors  — surfaces transient save errors to the UI
+ *
+ * Data flow on login:
+ *   1. Instantly hydrate from AsyncStorage cache so UI renders immediately.
+ *   2. Fetch fresh data from the API (all 4 domains in parallel, silently).
+ *   3. Process any offline-queued operations that failed during a previous session.
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import createContextHook from "@nkzw/create-context-hook";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -95,6 +114,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		essay2: { title: '', author: '', content: '' }
 	});
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// OFFLINE QUEUE — retry failed creates when the backend comes back online
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	/**
 	 * Retries all queued create operations that failed while the backend was cold.
 	 * Keeps temp items visible in state until confirmed by the server, then swaps
@@ -173,6 +196,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		setPendingOperations(offlineQueue.getPendingCount());
 	}, [user?.uid]);
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// TASKS — refresh, add, update, delete
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	// Manual refresh function for tasks
 	const refreshTasks = useCallback(async (options?: { silent?: boolean }) => {
 		if (!user?.uid) return;
@@ -237,6 +264,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 	};
 
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// CLASSES — refresh, add, update, delete
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	// Manual refresh function for classes
 	const refreshClasses = useCallback(async (options?: { silent?: boolean }) => {
 		if (!user?.uid) return;
@@ -261,6 +292,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 			if (!options?.silent) setClassesLoading(false);
 		}
 	}, [user?.uid]);
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// GOALS — refresh, add, update, delete
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// Manual refresh function for goals
 	const refreshGoals = useCallback(async (options?: { silent?: boolean }) => {
@@ -287,6 +322,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		}
 	}, [user?.uid]);
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// NOTES — refresh, add, update, delete
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	// Manual refresh function for notes
 	const refreshNotes = useCallback(async (options?: { silent?: boolean }) => {
 		if (!user?.uid) return;
@@ -306,6 +345,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 			if (!options?.silent) setNotesLoading(false);
 		}
 	}, [user?.uid]);
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// INITIAL LOAD — hydrate from cache, then refresh from API on login
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// On login: load all data.
 	// Step 1 — instantly hydrate from AsyncStorage cache (makes isLoading go false right away).
@@ -355,6 +398,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		loadFromCache().then(fetchFresh);
 	}, [user?.uid]);
 
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// VIDEO CONFIG — Firestore real-time listener for home/causes screen content
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// Video Configuration Listener — retries with exponential backoff on error
 	useEffect(() => {
@@ -414,6 +461,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		};
 	}, []);
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// NETWORK STATUS — go online/offline, flush offline queue when reconnected
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	// Network status listener
 	useEffect(() => {
 		const handleNetworkChange = (online: boolean) => {
@@ -434,6 +485,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 			offlineQueue.removeNetworkListener(handleNetworkChange);
 		};
 	}, [processOfflineQueue]);
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// CALENDAR SYNC — load settings, toggle sync, bulk-sync tasks & classes
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// Load calendar sync settings and validate the stored calendar ID is still valid
 	useEffect(() => {
@@ -471,6 +526,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 
 		loadCalendarSettings();
 	}, []);
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// STUDY GROUPS — unread counts, mark-as-read
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// Load last read timestamps
 	useEffect(() => {
@@ -525,6 +584,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 	const totalUnreadCount = useMemo(() => {
 		return Object.values(unreadCountMapping).reduce((acc, count) => acc + count, 0);
 	}, [unreadCountMapping]);
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// TASKS — CRUD operations
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	const addTask = async (task: Task) => {
 		if (!user?.uid) return;
@@ -746,6 +809,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		}
 	};
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// CLASSES — CRUD operations
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	const addClass = async (cls: Class) => {
 		if (!user?.uid) return;
 
@@ -856,6 +923,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		}
 	};
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// GOALS — CRUD operations
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	const addGoal = async (goal: Goal) => {
 		if (!user?.uid) return;
 
@@ -946,6 +1017,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		}
 	};
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// NOTES — CRUD operations
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	const addNote = async (note: Omit<Note, "id">) => {
 		if (!user?.uid) return;
 
@@ -1029,6 +1104,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 			notifySyncError("Couldn't delete note. Please try again.");
 		}
 	};
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// STUDY GROUPS — real-time WebSocket, CRUD, messaging, membership
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// Manual refresh function for study groups
 	const refreshStudyGroups = useCallback(async () => {
@@ -1572,6 +1651,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 		}
 	}, [user?.uid]);
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// DERIVED STATE — memos computed from raw state above
+	// ─────────────────────────────────────────────────────────────────────────────
+
 	const sortedTasks = useMemo(() => {
 		return [...tasks].sort((a, b) => {
 			const dateA = new Date(a.createdAt).getTime();
@@ -1579,6 +1662,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 			return dateB - dateA; // Newest first
 		});
 	}, [tasks]);
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// CALENDAR SYNC — toggle and bulk-sync operations
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	// Toggle calendar sync
 	const toggleCalendarSync = async (enabled: boolean) => {
@@ -1671,6 +1758,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 			return 0;
 		}
 	};
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// CONTEXT VALUE — everything exposed to consumers via useApp()
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	return {
 		tasks,

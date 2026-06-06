@@ -3,8 +3,7 @@ if (process.env.VERIFY_BUILD !== 'true') process.exit(0);
 const { rmSync } = require('fs');
 
 const heavy = [
-  // Payment / analytics
-  '@stripe',
+  // Analytics / monitoring
   '@sentry',
   'mixpanel-react-native',
   // Firebase (very large)
