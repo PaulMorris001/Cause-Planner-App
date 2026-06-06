@@ -6,8 +6,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as Updates from "expo-updates";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { View, TouchableOpacity, StyleSheet, Modal, Text, ScrollView, Pressable, StatusBar, Image, Platform, InteractionManager, Animated, AppState, AppStateStatus } from "react-native";
-import { Menu, CheckSquare, Calendar, Target, FileText, BookOpen, Heart, Sparkles, User, Home, X, Users, WifiOff } from "lucide-react-native";
+import { View, TouchableOpacity, StyleSheet, Modal, Text, ScrollView, Pressable, StatusBar, Image, Platform, InteractionManager, Animated, AppState, AppStateStatus, Alert } from "react-native";
+import { Menu, CheckSquare, Calendar, Target, FileText, BookOpen, Heart, Sparkles, User, Home, X, WifiOff } from "lucide-react-native";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { StreakProvider } from "@/contexts/StreakContext";
@@ -17,7 +17,6 @@ import LogoButton from "@/components/LogoButton";
 import colors from "@/constants/colors";
 import { auth } from "@/firebaseConfig";
 import * as Sentry from '@sentry/react-native';
-import { StripeProvider } from '@stripe/stripe-react-native';
 import * as Analytics from "@/utils/analytics";
 import { useResponsive } from '@/utils/responsive';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
@@ -38,7 +37,6 @@ function MenuButton() {
     { label: 'Tasks', icon: CheckSquare, route: '/tasks' },
     { label: 'Calendar', icon: Calendar, route: '/calendar' },
     { label: 'Classes', icon: BookOpen, route: '/classes' },
-    // { label: 'Study Groups', icon: Users, route: '/study-groups' }, // temporarily disabled
     { label: 'Goals', icon: Target, route: '/goals' },
     { label: 'Notes', icon: FileText, route: '/notes' },
     { label: 'AI Buddy', icon: Sparkles, route: '/ai-buddy' },
@@ -544,8 +542,6 @@ function RootLayoutNav() {
 }
 
 function RootLayout() {
-  const stripeKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_live_51PRLrfP0t2AuYFqKyKwaltV3py5wvWtfdPgfadWXFl3k7nbhygi2O8J9XnwuZMWWfLavLKiN7E2A794UozlAOBq2003kcHeHIE';
-
   useEffect(() => {
     // Defer Sentry init until after all interactions/animations complete so it
     // doesn't block the UI thread on slow or low-end devices.
@@ -564,22 +560,17 @@ function RootLayout() {
   }, []);
 
   return (
-    <StripeProvider
-      publishableKey={stripeKey}
-      merchantIdentifier="merchant.com.minatoventures.causeai"
-    >
-      <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <AuthProvider>
-            <StreakProvider>
-              <AppProvider>
-                <RootLayoutNav />
-              </AppProvider>
-            </StreakProvider>
-          </AuthProvider>
-        </GestureHandlerRootView>
-      </QueryClientProvider>
-    </StripeProvider>
+    <QueryClientProvider client={queryClient}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <AuthProvider>
+          <StreakProvider>
+            <AppProvider>
+              <RootLayoutNav />
+            </AppProvider>
+          </StreakProvider>
+        </AuthProvider>
+      </GestureHandlerRootView>
+    </QueryClientProvider>
   );
 }
 

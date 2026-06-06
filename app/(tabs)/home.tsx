@@ -5,10 +5,8 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   ActivityIndicator,
   RefreshControl,
-  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -16,7 +14,7 @@ import colors from '@/constants/colors';
 import { useApp } from '@/contexts/AppContext';
 import { useStreak } from '@/contexts/StreakContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Zap, Flame, Trophy, ListChecks, CheckCircle, Circle, Clock, LayoutGrid, Sparkles, Plus, BookOpen, FileText, ChevronLeft, ChevronRight, X, Target } from 'lucide-react-native';
+import { Zap, Flame, Trophy, ListChecks, CheckCircle, Circle, Clock, Sparkles } from 'lucide-react-native';
 import * as Sentry from '@sentry/react-native';
 import { formatStringTime12H } from '@/utils/timeUtils';
 import UpgradeModal from '@/components/UpgradeModal';
@@ -27,13 +25,22 @@ import WidgetBottomSheet from '@/components/WidgetBottomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useResponsive } from '@/utils/responsive';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
+import ClassesWidget from '@/components/home/ClassesWidget';
+import NotesWidget from '@/components/home/NotesWidget';
+import GoalsWidget from '@/components/home/GoalsWidget';
+import CalendarWidget from '@/components/home/CalendarWidget';
+import CustomizeSection from '@/components/home/CustomizeSection';
+import widgetColors from '@/constants/widgetColors';
 
 const WIDGET_META: Record<string, { label: string; color: string }> = {
-  classes:  { label: 'Classes',   color: '#2563EB' },
-  notes:    { label: 'Notes',     color: '#10B981' },
-  goals:    { label: 'Goals',     color: '#F59E0B' },
-  calendar: { label: 'Calendar',  color: '#EF4444' },
+  classes:  { label: 'Classes',  color: widgetColors.classes },
+  notes:    { label: 'Notes',    color: widgetColors.notes },
+  goals:    { label: 'Goals',    color: widgetColors.goals },
+  calendar: { label: 'Calendar', color: widgetColors.calendar },
 };
+
+const FOCUS_REFRESH_THROTTLE_MS = 30_000; // minimum gap between streak refreshes on focus
+const QUOTE_ROTATION_INTERVAL_MS = 10_000; // how often the home screen quote cycles
 
 export default function HomeScreen() {
   const ctx = useApp();
@@ -71,8 +78,6 @@ export default function HomeScreen() {
   const [showTour, setShowTour] = useState(false);
   const [showWidgetSheet, setShowWidgetSheet] = useState(false);
   const [activeWidgets, setActiveWidgets] = useState<Set<string>>(new Set());
-  const [calWidgetDate, setCalWidgetDate] = useState(new Date());
-  const [calWidgetSelected, setCalWidgetSelected] = useState<Date | null>(null);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -164,7 +169,7 @@ export default function HomeScreen() {
       const now = Date.now();
       // Only refresh if it's been more than 30 seconds since last focus refresh
       // This prevents loops if focus triggers too rapidly
-      if (typeof refreshStreak === 'function' && now - lastFocusRef.current > 30000) {
+      if (typeof refreshStreak === 'function' && now - lastFocusRef.current > FOCUS_REFRESH_THROTTLE_MS) {
         lastFocusRef.current = now;
         refreshStreak({ silent: true });
       }
@@ -175,7 +180,7 @@ export default function HomeScreen() {
     const interval = setInterval(() => {
       quoteIndexRef.current = (quoteIndexRef.current + 1) % educationQuotes.length;
       setCurrentQuote(educationQuotes[quoteIndexRef.current]);
-    }, 10000);
+    }, QUOTE_ROTATION_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [educationQuotes]);
 
@@ -221,38 +226,6 @@ export default function HomeScreen() {
   }, []);
 
   const firstName = user?.name ? user.name.split(' ')[0] : 'there';
-
-  const getCalWidgetMonthDays = useCallback((date: Date): (Date | null)[] => {
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const days: (Date | null)[] = [];
-    for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
-    for (let i = 1; i <= lastDay.getDate(); i++) days.push(new Date(year, month, i));
-    return days;
-  }, []);
-
-  const getWidgetTasksForDate = useCallback((date: Date | null) => {
-    if (!date) return [];
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return sortedTasks.filter(t => t.dueDate === `${y}-${m}-${d}`);
-  }, [sortedTasks]);
-
-  const getWidgetClassesForDate = useCallback((date: Date | null) => {
-    if (!date) return [];
-    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-    const filtered = classes.filter(cls => {
-      if (!cls.daysOfWeek.includes(dayName)) return false;
-      const [sY, sM, sD] = cls.startDate.split('-').map(Number);
-      const [eY, eM, eD] = cls.endDate.split('-').map(Number);
-      const check = new Date(date); check.setHours(0, 0, 0, 0);
-      return check >= new Date(sY, sM - 1, sD, 0, 0, 0, 0) && check <= new Date(eY, eM - 1, eD, 23, 59, 59, 999);
-    });
-    return Array.from(new Map(filtered.map(cls => [cls.id, cls])).values());
-  }, [classes]);
 
   const getDaysUntil = useCallback((dateStr: string) => {
     // Parse as local date — never use new Date("YYYY-MM-DD") directly
@@ -357,8 +330,6 @@ export default function HomeScreen() {
               </View>
             </View>
 
-
-
           <TouchableOpacity
             style={styles.importButton}
             onPress={() => {
@@ -383,7 +354,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-
         <View style={styles.quoteSection}>
           <Text style={[styles.quoteText, { fontSize: normalize(15) }]}>&ldquo;{currentQuote}&rdquo;</Text>
         </View>
@@ -401,7 +371,7 @@ export default function HomeScreen() {
             </View>
             <View style={isTablet ? styles.taskListTablet : null}>
               {upcomingTasks
-                .filter(task => task.id) 
+                .filter(task => task.id)
                 .map((task, index) => (
                   <TouchableOpacity
                     key={`${task.id}-${index}`}
@@ -444,354 +414,50 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Classes widget */}
         {activeWidgets.has('classes') && (
-          <View style={styles.classesSection}>
-            <View style={styles.classesSectionHeader}>
-              <Text style={[styles.sectionTitle, { fontSize: normalize(20), textAlign: 'left' }]}>
-                <Text style={{ fontWeight: '800' }}>My Classes</Text>
-              </Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/classes')}>
-                <Text style={[styles.viewAllText, { fontSize: normalize(14) }]}>View All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {recentClasses.length === 0 ? (
-              <View style={styles.classesEmptyState}>
-                <View style={styles.classesEmptyIconWrap}>
-                  <BookOpen size={28} color={colors.primary} />
-                </View>
-                <Text style={[styles.classesEmptyTitle, { fontSize: normalize(16) }]}>No classes yet</Text>
-                <Text style={[styles.classesEmptyText, { fontSize: normalize(13) }]}>
-                  Add your first class to see it here on your home screen.
-                </Text>
-                <TouchableOpacity
-                  style={styles.classesEmptyCTA}
-                  onPress={() => router.push('/(tabs)/classes')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.classesEmptyCTAText, { fontSize: normalize(14) }]}>Add a Class</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              recentClasses.map(cls => (
-                <TouchableOpacity
-                  key={cls.id}
-                  style={[styles.classCard, { borderLeftColor: cls.color }]}
-                  onPress={() => router.push('/(tabs)/classes')}
-                >
-                  <View style={[styles.classCardIcon, { backgroundColor: cls.color + '20' }]}>
-                    <BookOpen size={20} color={cls.color} />
-                  </View>
-                  <View style={styles.classCardContent}>
-                    <Text style={[styles.classCardName, { fontSize: normalize(15) }]} numberOfLines={1}>
-                      {cls.name}
-                    </Text>
-                    {cls.section ? (
-                      <Text style={[styles.classCardSection, { fontSize: normalize(12) }]}>{cls.section}</Text>
-                    ) : null}
-                    <View style={styles.classCardMetaRow}>
-                      <Clock size={12} color={colors.textLight} />
-                      <Text style={[styles.classCardMetaText, { fontSize: normalize(11) }]}>{cls.time}</Text>
-                    </View>
-                    <Text style={[styles.classCardDays, { fontSize: normalize(11) }]} numberOfLines={1}>
-                      {cls.daysOfWeek.join(', ')}
-                    </Text>
-                  </View>
-                  <View style={[styles.classColorDot, { backgroundColor: cls.color }]} />
-                </TouchableOpacity>
-              ))
-            )}
-          </View>
+          <ClassesWidget
+            recentClasses={recentClasses}
+            normalize={normalize}
+            onNavigate={() => router.push('/(tabs)/classes')}
+          />
         )}
 
-        {/* Notes widget */}
         {activeWidgets.has('notes') && (
-          <View style={styles.notesSection}>
-            <View style={styles.notesSectionHeader}>
-              <Text style={[styles.sectionTitle, { fontSize: normalize(20), textAlign: 'left' }]}>
-                <Text style={{ fontWeight: '800' }}>My Notes</Text>
-              </Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/notes')}>
-                <Text style={[styles.viewAllText, { fontSize: normalize(14) }]}>View All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {recentNotes.length === 0 ? (
-              <View style={styles.notesEmptyState}>
-                <View style={styles.notesEmptyIconWrap}>
-                  <FileText size={28} color={colors.primary} />
-                </View>
-                <Text style={[styles.notesEmptyTitle, { fontSize: normalize(16) }]}>No notes yet</Text>
-                <Text style={[styles.notesEmptyText, { fontSize: normalize(13) }]}>
-                  Start capturing your ideas and study notes here.
-                </Text>
-                <TouchableOpacity
-                  style={styles.notesEmptyCTA}
-                  onPress={() => router.push('/(tabs)/notes')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.notesEmptyCTAText, { fontSize: normalize(14) }]}>Add a Note</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              recentNotes.map(note => (
-                <TouchableOpacity
-                  key={note.id}
-                  style={styles.noteCard}
-                  onPress={() => router.push('/(tabs)/notes')}
-                >
-                  <View style={styles.noteCardIconWrap}>
-                    <FileText size={18} color={colors.primary} />
-                  </View>
-                  <View style={styles.noteCardContent}>
-                    <View style={styles.noteCardHeader}>
-                      <Text style={[styles.noteCardTitle, { fontSize: normalize(15) }]} numberOfLines={1}>
-                        {note.title}
-                      </Text>
-                      {note.className ? (
-                        <View style={styles.noteClassTag}>
-                          <Text style={[styles.noteClassTagText, { fontSize: normalize(10) }]}>{note.className}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                    {note.content ? (
-                      <Text style={[styles.noteCardPreview, { fontSize: normalize(12) }]} numberOfLines={2}>
-                        {note.content}
-                      </Text>
-                    ) : null}
-                    <Text style={[styles.noteCardDate, { fontSize: normalize(11) }]}>
-                      {formatNoteDate(note.updatedAt)}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))
-            )}
-          </View>
+          <NotesWidget
+            recentNotes={recentNotes}
+            normalize={normalize}
+            formatNoteDate={formatNoteDate}
+            onNavigate={() => router.push('/(tabs)/notes')}
+          />
         )}
 
-        {/* Goals widget */}
         {activeWidgets.has('goals') && (
-          <View style={styles.goalsSection}>
-            <View style={styles.goalsSectionHeader}>
-              <Text style={[styles.sectionTitle, { fontSize: normalize(20), textAlign: 'left' }]}>
-                <Text style={{ fontWeight: '800' }}>My Goals</Text>
-              </Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/goals')}>
-                <Text style={[styles.viewAllText, { fontSize: normalize(14) }]}>View All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {recentGoals.length === 0 ? (
-              <View style={styles.goalsEmptyState}>
-                <View style={styles.goalsEmptyIconWrap}>
-                  <Target size={28} color={colors.primary} />
-                </View>
-                <Text style={[styles.goalsEmptyTitle, { fontSize: normalize(16) }]}>No goals yet</Text>
-                <Text style={[styles.goalsEmptyText, { fontSize: normalize(13) }]}>
-                  Set your first goal and start building consistency.
-                </Text>
-                <TouchableOpacity
-                  style={styles.goalsEmptyCTA}
-                  onPress={() => router.push('/(tabs)/goals')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.goalsEmptyCTAText, { fontSize: normalize(14) }]}>Add a Goal</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              recentGoals.map(goal => {
-                const totalHabits = goal.habits?.length ?? 0;
-                const doneHabits = goal.habits?.filter(h => h.completed).length ?? 0;
-                const progress = totalHabits > 0 ? Math.round((doneHabits / totalHabits) * 100) : null;
-                const dueDateStr = goal.dueDate
-                  ? (() => {
-                      const [y, m, d] = goal.dueDate.split('-').map(Number);
-                      return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    })()
-                  : null;
-
-                return (
-                  <TouchableOpacity
-                    key={goal.id}
-                    style={styles.goalWidgetCard}
-                    onPress={() => router.push('/(tabs)/goals')}
-                  >
-                    <View style={styles.goalWidgetLeft}>
-                      {goal.completed
-                        ? <CheckCircle size={22} color={colors.success} />
-                        : <Circle size={22} color={colors.primary} />
-                      }
-                    </View>
-                    <View style={styles.goalWidgetContent}>
-                      <Text
-                        style={[styles.goalWidgetTitle, { fontSize: normalize(15) }, goal.completed && styles.goalWidgetTitleDone]}
-                        numberOfLines={1}
-                      >
-                        {goal.title}
-                      </Text>
-                      {goal.description ? (
-                        <Text style={[styles.goalWidgetDesc, { fontSize: normalize(12) }]} numberOfLines={1}>
-                          {goal.description}
-                        </Text>
-                      ) : null}
-                      {progress !== null && (
-                        <View style={styles.goalWidgetProgress}>
-                          <View style={styles.goalWidgetProgressBar}>
-                            <View style={[styles.goalWidgetProgressFill, { width: `${progress}%` }]} />
-                          </View>
-                          <Text style={[styles.goalWidgetProgressText, { fontSize: normalize(11) }]}>
-                            {doneHabits}/{totalHabits} subtasks
-                          </Text>
-                        </View>
-                      )}
-                      {dueDateStr ? (
-                        <Text style={[styles.goalWidgetDue, { fontSize: normalize(11) }]}>Due: {dueDateStr}</Text>
-                      ) : null}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })
-            )}
-          </View>
+          <GoalsWidget
+            recentGoals={recentGoals}
+            normalize={normalize}
+            onNavigate={() => router.push('/(tabs)/goals')}
+          />
         )}
 
-        {/* Calendar widget */}
         {activeWidgets.has('calendar') && (
-          <View style={styles.calendarSection}>
-            {/* Header row */}
-            <View style={styles.calendarSectionHeader}>
-              <Text style={[styles.sectionTitle, { fontSize: normalize(20) }]}>
-                <Text style={{ fontWeight: '800' }}>My Calendar</Text>
-              </Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/calendar')}>
-                <Text style={[styles.viewAllText, { fontSize: normalize(14) }]}>View All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Month navigation */}
-            <View style={styles.calWidgetNav}>
-              <TouchableOpacity
-                style={styles.calWidgetNavBtn}
-                onPress={() => { const d = new Date(calWidgetDate); d.setMonth(d.getMonth() - 1); setCalWidgetDate(d); }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <ChevronLeft size={20} color={colors.text} />
-              </TouchableOpacity>
-              <Text style={[styles.calWidgetMonthTitle, { fontSize: normalize(16) }]}>
-                {calWidgetDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </Text>
-              <TouchableOpacity
-                style={styles.calWidgetNavBtn}
-                onPress={() => { const d = new Date(calWidgetDate); d.setMonth(d.getMonth() + 1); setCalWidgetDate(d); }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <ChevronRight size={20} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Weekday labels */}
-            <View style={styles.calWidgetWeekDaysRow}>
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                <Text key={d} style={[styles.calWidgetWeekDayText, { fontSize: normalize(11) }]}>{d}</Text>
-              ))}
-            </View>
-
-            {/* Day cells */}
-            <View style={styles.calWidgetDaysGrid}>
-              {getCalWidgetMonthDays(calWidgetDate).map((day, index) => {
-                const tasks = getWidgetTasksForDate(day);
-                const dayClasses = getWidgetClassesForDate(day);
-                const isToday = day?.toDateString() === new Date().toDateString();
-                const isSelected = day && calWidgetSelected && day.toDateString() === calWidgetSelected.toDateString();
-                const allEvents = [
-                  ...tasks.map(t => ({ id: t.id, color: (colors.taskColors as Record<string, string>)[t.type] || colors.primary })),
-                  ...dayClasses.map(c => ({ id: c.id, color: c.color })),
-                ];
-                const hasMore = allEvents.length > 3;
-                const displayEvents = allEvents.slice(0, hasMore ? 2 : 3);
-
-                return (
-                  <TouchableOpacity
-                    key={index}
-                    style={styles.calWidgetDayCell}
-                    onPress={() => day && setCalWidgetSelected(day)}
-                    disabled={!day}
-                    activeOpacity={0.7}
-                  >
-                    {day && (
-                      <>
-                        <View style={[
-                          styles.calWidgetDayNumber,
-                          isToday && styles.calWidgetDayNumberToday,
-                          isSelected && !isToday && styles.calWidgetDayNumberSelected,
-                        ]}>
-                          <Text style={[
-                            styles.calWidgetDayNumberText,
-                            { fontSize: normalize(13) },
-                            isToday && styles.calWidgetDayNumberTextToday,
-                            isSelected && !isToday && styles.calWidgetDayNumberTextSelected,
-                          ]}>
-                            {day.getDate()}
-                          </Text>
-                        </View>
-                        <View style={styles.calWidgetDayEvents}>
-                          {displayEvents.map((ev, i) => (
-                            <View key={`${ev.id}-${i}`} style={[styles.calWidgetEventDot, { backgroundColor: ev.color }]} />
-                          ))}
-                          {hasMore && <Text style={styles.calWidgetMoreText}>+</Text>}
-                        </View>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+          <CalendarWidget
+            sortedTasks={sortedTasks}
+            classes={classes}
+            normalize={normalize}
+            onNavigate={() => router.push('/(tabs)/calendar')}
+          />
         )}
 
-        {/* Customize section */}
-        <View style={[styles.customizeSection, { width: width - 40 }]}>
-          {/* Icon + title */}
-          <View style={styles.customizeHeader}>
-            <View style={styles.customizeIconWrap}>
-              <LayoutGrid size={20} color={colors.primary} />
-            </View>
-            <Text style={[styles.customizeTitle, { fontSize: normalize(17) }]}>Customize Your Experience</Text>
-          </View>
-
-          {/* Active widget chips */}
-          {activeWidgets.size > 0 && (
-            <View style={styles.activeWidgetsList}>
-              {Array.from(activeWidgets).map(key => {
-                const meta = WIDGET_META[key];
-                if (!meta) return null;
-                return (
-                  <View key={key} style={[styles.activeWidgetChip, { borderColor: meta.color }]}>
-                    <View style={[styles.activeWidgetDot, { backgroundColor: meta.color }]} />
-                    <Text style={[styles.activeWidgetLabel, { color: meta.color, fontSize: normalize(12) }]}>
-                      {meta.label}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Add button */}
-          <TouchableOpacity style={styles.customizeAddButton} activeOpacity={0.8} onPress={() => setShowWidgetSheet(true)}>
-            <Plus size={28} color="white" />
-          </TouchableOpacity>
-
-          {/* Subtitle */}
-          <Text style={[styles.customizeSubtitle, { fontSize: normalize(12) }]}>
-            {activeWidgets.size > 0 ? 'Tap + to add more widgets' : 'Add widgets to personalize your home screen'}
-          </Text>
-        </View>
+        <CustomizeSection
+          activeWidgets={activeWidgets}
+          widgetMeta={WIDGET_META}
+          width={width}
+          normalize={normalize}
+          onAddWidget={() => setShowWidgetSheet(true)}
+        />
 
       </ScrollView>
       </ResponsiveContainer>
-
 
       {showTour && (
         <OnboardingTour
@@ -806,81 +472,6 @@ export default function HomeScreen() {
         onConfirm={handleWidgetsConfirm}
         activeWidgets={activeWidgets}
       />
-
-      {/* Calendar day detail modal */}
-      <Modal
-        visible={!!calWidgetSelected}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setCalWidgetSelected(null)}
-      >
-        <View style={styles.calDayModalOverlay}>
-          {/* Backdrop — tap to dismiss */}
-          <TouchableWithoutFeedback onPress={() => setCalWidgetSelected(null)}>
-            <View style={StyleSheet.absoluteFillObject} />
-          </TouchableWithoutFeedback>
-
-          {/* Sheet — touch stopper prevents taps from reaching the backdrop */}
-          <TouchableWithoutFeedback onPress={() => {}}>
-          <View style={styles.calDayModalSheet}>
-            <View style={styles.calDayModalHandle} />
-            <View style={styles.calDayModalHeader}>
-              <Text style={[styles.calDayModalTitle, { fontSize: normalize(18) }]}>
-                {calWidgetSelected?.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-              </Text>
-              <TouchableOpacity
-                style={styles.calDayModalClose}
-                onPress={() => setCalWidgetSelected(null)}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              >
-                <X size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {(() => {
-                const tasks = getWidgetTasksForDate(calWidgetSelected);
-                const dayClasses = getWidgetClassesForDate(calWidgetSelected);
-                if (tasks.length === 0 && dayClasses.length === 0) {
-                  return (
-                    <Text style={[styles.calDayModalEmpty, { fontSize: normalize(14) }]}>
-                      Nothing scheduled for this day.
-                    </Text>
-                  );
-                }
-                return (
-                  <>
-                    {dayClasses.length > 0 && (
-                      <>
-                        <Text style={[styles.calDayModalSectionTitle, { fontSize: normalize(11) }]}>Classes</Text>
-                        {dayClasses.map(cls => (
-                          <View key={cls.id} style={[styles.calDayModalItem, { borderLeftColor: cls.color }]}>
-                            <Text style={[styles.calDayModalItemTitle, { fontSize: normalize(14) }]}>{cls.name}</Text>
-                            <Text style={[styles.calDayModalItemMeta, { fontSize: normalize(12) }]}>{cls.time}</Text>
-                          </View>
-                        ))}
-                      </>
-                    )}
-                    {tasks.length > 0 && (
-                      <>
-                        <Text style={[styles.calDayModalSectionTitle, { fontSize: normalize(11), marginTop: dayClasses.length > 0 ? 12 : 0 }]}>Tasks</Text>
-                        {tasks.map(task => (
-                          <View key={task.id} style={[styles.calDayModalItem, { borderLeftColor: (colors.taskColors as Record<string, string>)[task.type] || colors.primary }]}>
-                            <Text style={[styles.calDayModalItemTitle, { fontSize: normalize(14) }]}>{task.description}</Text>
-                            <Text style={[styles.calDayModalItemMeta, { fontSize: normalize(12) }]}>
-                              {task.type}{task.dueTime ? ` • ${formatStringTime12H(task.dueTime)}` : ''}
-                            </Text>
-                          </View>
-                        ))}
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-            </ScrollView>
-          </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </Modal>
 
       <UpgradeModal
         visible={showUpgradeModal}
@@ -904,7 +495,7 @@ export default function HomeScreen() {
           router.push('/(tabs)/account');
         }}
       />
-    </SafeAreaView >
+    </SafeAreaView>
   );
 }
 
@@ -912,7 +503,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    // paddingBottom: 50,
   },
   loadingContainer: {
     flex: 1,
@@ -1038,11 +628,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 12,
   },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700' as const,
+    color: colors.text,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
   viewAllText: {
     fontSize: 14,
     fontWeight: '600' as const,
     color: colors.primary,
-    textAlign: "right",
+    textAlign: 'right',
   },
   taskCard: {
     backgroundColor: colors.surface,
@@ -1063,7 +660,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   taskCardTablet: {
-    width: '48%', // 2 columns
+    width: '48%',
     marginBottom: 0,
   },
   taskIcon: {
@@ -1135,13 +732,6 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700' as const,
-    color: colors.text,
-    marginBottom: 4,
-    textAlign: "center",
-  },
   importButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1178,534 +768,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.premium,
   },
-  customizeSection: {
-    marginHorizontal: 20,
-    marginBottom: 24,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: colors.primary + '25',
-    backgroundColor: colors.primary + '08',
-    alignItems: 'center',
-    paddingVertical: 28,
-    paddingHorizontal: 24,
-    gap: 16,
-  },
-  customizeHeader: {
-    alignItems: 'center',
-    gap: 10,
-  },
-  customizeIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.primary + '15',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  customizeTitle: {
-    fontWeight: '800',
-    color: colors.text,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  activeWidgetsList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  activeWidgetChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderWidth: 1.5,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  activeWidgetDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  activeWidgetLabel: {
-    fontWeight: '600',
-  },
-  customizeSubtitle: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  customizeAddButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  classesSection: {
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  classesSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  classCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderLeftWidth: 4,
-    shadowColor: colors.cardShadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  classCardIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  classCardContent: {
-    flex: 1,
-    gap: 2,
-  },
-  classCardName: {
-    fontWeight: '700',
-    color: colors.text,
-  },
-  classCardSection: {
-    color: colors.textSecondary,
-  },
-  classCardMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 2,
-  },
-  classCardMetaText: {
-    color: colors.textLight,
-  },
-  classCardDays: {
-    color: colors.textSecondary,
-  },
-  classColorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginLeft: 8,
-  },
-  classesEmptyState: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    paddingHorizontal: 20,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
-  },
-  classesEmptyIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary + '12',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  classesEmptyTitle: {
-    fontWeight: '700',
-    color: colors.text,
-  },
-  classesEmptyText: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  goalsSection: {
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  goalsSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  goalWidgetCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    shadowColor: colors.cardShadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  goalWidgetLeft: {
-    marginRight: 12,
-    marginTop: 1,
-  },
-  goalWidgetContent: {
-    flex: 1,
-    gap: 4,
-  },
-  goalWidgetTitle: {
-    fontWeight: '700',
-    color: colors.text,
-  },
-  goalWidgetTitleDone: {
-    textDecorationLine: 'line-through',
-    color: colors.textSecondary,
-  },
-  goalWidgetDesc: {
-    color: colors.textSecondary,
-  },
-  goalWidgetProgress: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  goalWidgetProgressBar: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-  },
-  goalWidgetProgressFill: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.primary,
-  },
-  goalWidgetProgressText: {
-    color: colors.textSecondary,
-  },
-  goalWidgetDue: {
-    color: colors.textLight,
-  },
-  goalsEmptyState: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    paddingHorizontal: 20,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
-  },
-  goalsEmptyIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary + '12',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  goalsEmptyTitle: {
-    fontWeight: '700',
-    color: colors.text,
-  },
-  goalsEmptyText: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  goalsEmptyCTA: {
-    marginTop: 8,
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  goalsEmptyCTAText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  calendarSection: {
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  calendarSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  calWidgetNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  calWidgetNavBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  calWidgetMonthTitle: {
-    fontWeight: '700',
-    color: colors.text,
-    flex: 1,
-    textAlign: 'center',
-  },
-  calWidgetWeekDaysRow: {
-    flexDirection: 'row',
-    marginBottom: 4,
-  },
-  calWidgetWeekDayText: {
-    flex: 1,
-    textAlign: 'center',
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  calWidgetDaysGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  calWidgetDayCell: {
-    width: '14.28%',
-    aspectRatio: 1,
-    padding: 2,
-    alignItems: 'center',
-  },
-  calWidgetDayNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  calWidgetDayNumberToday: {
-    backgroundColor: colors.primary,
-  },
-  calWidgetDayNumberSelected: {
-    backgroundColor: colors.primary + '30',
-  },
-  calWidgetDayNumberText: {
-    fontWeight: '600',
-    color: colors.text,
-  },
-  calWidgetDayNumberTextToday: {
-    color: '#FFFFFF',
-  },
-  calWidgetDayNumberTextSelected: {
-    color: colors.primary,
-  },
-  calWidgetDayEvents: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 2,
-    gap: 2,
-  },
-  calWidgetEventDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-  },
-  calWidgetMoreText: {
-    fontSize: 9,
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  // Day detail modal
-  calDayModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-  calDayModalSheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: 40,
-    maxHeight: '70%',
-  },
-  calDayModalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  calDayModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  calDayModalTitle: {
-    fontWeight: '800',
-    color: colors.text,
-    flex: 1,
-  },
-  calDayModalClose: {
-    padding: 4,
-  },
-  calDayModalSectionTitle: {
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  calDayModalItem: {
-    borderLeftWidth: 3,
-    paddingLeft: 12,
-    marginBottom: 12,
-  },
-  calDayModalItemTitle: {
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 2,
-  },
-  calDayModalItemMeta: {
-    color: colors.textSecondary,
-  },
-  calDayModalEmpty: {
-    textAlign: 'center',
-    color: colors.textSecondary,
-    marginTop: 8,
-  },
-  notesSection: {
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  notesSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  noteCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    shadowColor: colors.cardShadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  noteCardIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.primary + '15',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 2,
-  },
-  noteCardContent: {
-    flex: 1,
-    gap: 4,
-  },
-  noteCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  noteCardTitle: {
-    fontWeight: '700',
-    color: colors.text,
-    flexShrink: 1,
-  },
-  noteClassTag: {
-    backgroundColor: colors.primary + '18',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  noteClassTagText: {
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  noteCardPreview: {
-    color: colors.textSecondary,
-    lineHeight: 18,
-  },
-  noteCardDate: {
-    color: colors.textLight,
-  },
-  notesEmptyState: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    paddingHorizontal: 20,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
-  },
-  notesEmptyIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary + '12',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  notesEmptyTitle: {
-    fontWeight: '700',
-    color: colors.text,
-  },
-  notesEmptyText: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  notesEmptyCTA: {
-    marginTop: 8,
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  notesEmptyCTAText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  classesEmptyCTA: {
-    marginTop: 8,
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  classesEmptyCTAText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
 });
-

@@ -258,7 +258,7 @@ We do not sell your personal information. We may share your information in the f
 
 5.1 Service Providers
 We work with trusted third-party service providers who assist us in operating our app:
-• Payment Processors: Stripe Handle secure payment transactions (they never see your full payment card details)
+• Payment Processors: Apple App Store & Google Play Handle secure payment transactions
 • Cloud Storage Providers: Cloudinary Store your data securely
 • AI Service Providers: Open AI Process data for AI-powered features
 • Analytics Providers: Sentry Help us understand app usage and improve performance

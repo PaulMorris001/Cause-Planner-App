@@ -1,30 +1,20 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Modal,
-  TextInput,
   Animated,
   Platform,
   Alert,
-  ActivityIndicator,
   FlatList,
-  KeyboardAvoidingView,
-  TouchableWithoutFeedback,
-  Keyboard,
-  Pressable,
   RefreshControl,
-  Dimensions,
+  Linking,
 } from 'react-native';
-import Button from '@/components/Button';
-import DateTimePickerModal from 'react-native-modal-datetime-picker';
-import { formatTime12H, formatStringTime12H, parseTime12H, formatLocalDate, parseLocalDate, formatLocalDateTime } from '@/utils/timeUtils';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, X, CheckCircle, Circle, Edit2, Trash2 } from 'lucide-react-native';
+import { Plus } from 'lucide-react-native';
 import colors from '@/constants/colors';
 import { useApp } from '@/contexts/AppContext';
 import { Task, TaskType, Priority, ReminderTime } from '@/types';
@@ -34,22 +24,38 @@ import * as Analytics from '@/utils/analytics';
 import { useResponsive } from '@/utils/responsive';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Linking } from 'react-native';
+import {
+  formatLocalDate,
+  formatStringTime12H,
+  parseTime12H,
+  parseLocalDate,
+  formatLocalDateTime,
+} from '@/utils/timeUtils';
+
+import TaskCard from '@/components/tasks/TaskCard';
+import AddEditTaskModal from '@/components/tasks/AddEditTaskModal';
+import TaskDetailModal from '@/components/tasks/TaskDetailModal';
+import TaskActionSheet from '@/components/tasks/TaskActionSheet';
 
 const IOS_PERSISTENT_BANNER_KEY = '@ios_persistent_banner_confirmed';
 
-
 export default function TasksScreen() {
   const { sortedTasks, addTask, updateTask, deleteTask, classes, refreshTasks } = useApp();
-
   const router = useRouter();
+  const { isTablet } = useResponsive();
+
+  // Modal visibility
   const [showModal, setShowModal] = useState(false);
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
+
+  // Selected task state
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedTaskForDetail, setSelectedTaskForDetail] = useState<Task | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Add/edit form state
   const [repeat, setRepeat] = useState<string>('none');
   const [description, setDescription] = useState('');
   const [taskType, setTaskType] = useState<TaskType>('task');
@@ -65,6 +71,15 @@ export default function TasksScreen() {
   const [alarmEnabled, setAlarmEnabled] = useState(false);
   const [showPersistentBanner, setShowPersistentBanner] = useState(false);
 
+  // Search & filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'completed' | 'missed' | TaskType>('all');
+
+  // Animation refs
+  const scaleAnim = React.useRef(new Animated.Value(0)).current;
+  const detailScaleAnim = React.useRef(new Animated.Value(0)).current;
+
+  // iOS persistent banner check
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
     const check = async () => {
@@ -76,38 +91,7 @@ export default function TasksScreen() {
     check();
   }, [sortedTasks]);
 
-  // Search and filter states
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'completed' | 'missed' | TaskType>('all');
-
-  const scaleAnim = React.useRef(new Animated.Value(0)).current;
-  const detailScaleAnim = React.useRef(new Animated.Value(0)).current;
-
-
-  // Helper to check if a task is missed (not completed and past due)
-  const isTaskMissed = (task: Task) => {
-    if (task.completed) return false;
-
-    // Parse YYYY-MM-DD manually to create a local Date object at midnight
-    const [year, month, day] = task.dueDate.split('-').map(Number);
-    const due = new Date(year, month - 1, day);
-
-    if (task.dueTime) {
-      const [hours, minutes] = task.dueTime.split(':').map(Number);
-      due.setHours(hours, minutes, 0, 0);
-    } else {
-      // If no time is specified, default to end of day (23:59:59)
-      // to avoid marking it missed too early in the day
-      due.setHours(23, 59, 59, 999);
-    }
-
-    // Add 10 minutes grace period
-    const gracePeriod = new Date(due.getTime() + 10 * 60000);
-
-    return new Date() > gracePeriod;
-  };
-
-
+  // Add/edit modal open animation
   React.useEffect(() => {
     if (showModal) {
       Animated.spring(scaleAnim, {
@@ -121,6 +105,7 @@ export default function TasksScreen() {
     }
   }, [showModal, scaleAnim]);
 
+  // Detail modal open animation
   React.useEffect(() => {
     if (showDetailModal) {
       Animated.spring(detailScaleAnim, {
@@ -134,10 +119,10 @@ export default function TasksScreen() {
     }
   }, [showDetailModal, detailScaleAnim]);
 
+  // Static option lists
   const taskTypes: TaskType[] = ['task', 'event', 'exam', 'paper', 'appointment', 'homework', 'work', 'internship', 'daily habit'];
   const priorities: Priority[] = ['low', 'medium', 'high'];
   const reminders: ReminderTime[] = ['none', '1h', '2h', '1d', '2d', 'custom'];
-
   const reminderLabel: Record<ReminderTime, string> = {
     none: 'None',
     '1h': '1h',
@@ -147,52 +132,89 @@ export default function TasksScreen() {
     custom: 'Custom',
   };
 
-  // Filter tasks based on search and active filter
-  const filteredTasks = React.useMemo(() => {
-    const filtered = sortedTasks.filter(task => {
-      // Search filter (always active)
-      const matchesSearch = task.description.toLowerCase().includes(searchQuery.toLowerCase());
+  // Helper: check if a task is past due without completion
+  const isTaskMissed = (task: Task) => {
+    if (task.completed) return false;
+    const [year, month, day] = task.dueDate.split('-').map(Number);
+    const due = new Date(year, month - 1, day);
+    if (task.dueTime) {
+      const [hours, minutes] = task.dueTime.split(':').map(Number);
+      due.setHours(hours, minutes, 0, 0);
+    } else {
+      due.setHours(23, 59, 59, 999);
+    }
+    const gracePeriod = new Date(due.getTime() + 10 * 60000);
+    return new Date() > gracePeriod;
+  };
 
-      // Single active filter
+  // Helper: human-readable days until due
+  const getDaysUntil = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = Math.round((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    if (diff === -1) return 'Yesterday';
+    if (diff < 0) return `${Math.abs(diff)} days ago`;
+    return `In ${diff} days`;
+  };
+
+  // Helper: formatted date string
+  const formatDate = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // Filtered and sorted task list
+  const filteredTasks = React.useMemo(() => {
+    const filtered = sortedTasks.filter((task) => {
+      const matchesSearch = task.description.toLowerCase().includes(searchQuery.toLowerCase());
       let matchesFilter = true;
       if (activeFilter === 'active') {
-        // Active tasks are incomplete AND NOT missed
         matchesFilter = !task.completed && !isTaskMissed(task);
       } else if (activeFilter === 'completed') {
         matchesFilter = task.completed;
       } else if (activeFilter === 'missed') {
         matchesFilter = isTaskMissed(task);
       } else if (activeFilter !== 'all') {
-        // It's a task type filter
         matchesFilter = task.type === activeFilter;
       }
-
       return matchesSearch && matchesFilter;
     });
 
-    // Sort: incomplete tasks first, then completed tasks (only for 'all' filter)
     if (activeFilter === 'all') {
       return filtered.sort((a, b) => {
-        // If completion status is different, incomplete comes first
-        if (a.completed !== b.completed) {
-          return a.completed ? 1 : -1;
-        }        // If both have same completion status, maintain original order
+        if (a.completed !== b.completed) return a.completed ? 1 : -1;
         return 0;
       });
     }
-
     return filtered;
   }, [sortedTasks, searchQuery, activeFilter]);
 
+  // Reset add/edit form to defaults
+  const resetForm = () => {
+    setDescription('');
+    setTaskType('task');
+    setSelectedClass('');
+    setDueDate(new Date());
+    setDueTime(new Date());
+    setPriority('medium');
+    setReminder('none');
+    setCustomReminderDate(new Date());
+    setAlarmEnabled(false);
+    setRepeat('none');
+  };
+
+  // Submit add or edit
   const handleAddTask = () => {
     if (!description) return;
-
     const formattedDate = formatLocalDate(dueDate);
     const formattedTime = dueTime.toTimeString().split(' ')[0].substring(0, 5);
 
     if (isEditing && selectedTask) {
-      // Optimistic — state updates instantly, no need to await
-      // Reset completed to false: editing a task makes it active again
       updateTask(selectedTask.id, {
         description,
         type: taskType,
@@ -222,59 +244,44 @@ export default function TasksScreen() {
         completed: false,
         createdAt: new Date().toISOString(),
       };
-      // Fire-and-forget — optimistic update shows task instantly, backend syncs in background
       addTask(newTask);
       Analytics.logCustomEvent('task_created', {
         type: taskType,
-        priority: priority,
+        priority,
         has_class: !!selectedClass,
-        reminder_set: alarmEnabled
+        reminder_set: alarmEnabled,
       });
     }
 
-    // Close modal immediately — no need to wait for backend
     resetForm();
     setShowModal(false);
     setIsEditing(false);
     setSelectedTask(null);
   };
 
-  const resetForm = () => {
-    setDescription('');
-    setTaskType('task');
-    setSelectedClass('');
-    setDueDate(new Date());
-    setDueTime(new Date());
-    setPriority('medium');
-    setReminder('none');
-    setCustomReminderDate(new Date());
-    setAlarmEnabled(false);
-    setRepeat('none');
-  };
-
+  // Toggle task complete/incomplete
   const toggleTaskComplete = async (task: Task) => {
     updateTask(task.id, { completed: !task.completed });
-
     if (!task.completed) {
       Analytics.logCustomEvent('task_completed', {
         type: task.type,
         priority: task.priority,
-        days_to_due: Math.ceil((parseLocalDate(task.dueDate).getTime() - new Date().getTime()) / (1000 * 3600 * 24))
+        days_to_due: Math.ceil(
+          (parseLocalDate(task.dueDate).getTime() - new Date().getTime()) / (1000 * 3600 * 24),
+        ),
       });
     }
-
-    // Streak update is now handled automatically by the backend
-    // and state updates are handled optimistically by AppContext
   };
 
+  // Long-press opens action sheet
   const handleLongPress = (task: Task) => {
     setSelectedTask(task);
     setShowActionSheet(true);
   };
 
+  // Open edit modal for a given task
   const handleEdit = (taskToEdit: Task | null = selectedTask) => {
     if (!taskToEdit) return;
-
     setDescription(taskToEdit.description);
     setTaskType(taskToEdit.type);
     setSelectedClass(taskToEdit.className || '');
@@ -299,773 +306,289 @@ export default function TasksScreen() {
     setShowModal(true);
   };
 
+  // Delete from action sheet
   const handleDelete = () => {
     if (!selectedTask) return;
-
-    Alert.alert(
-      'Delete Task',
-      'Are you sure you want to delete this task?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteTask(selectedTask.id);
-            await refreshTasks();
-            setShowActionSheet(false);
-            setSelectedTask(null);
-          },
+    Alert.alert('Delete Task', 'Are you sure you want to delete this task?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteTask(selectedTask.id);
+          await refreshTasks();
+          setShowActionSheet(false);
+          setSelectedTask(null);
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  const formatDate = (dateStr: string) => {
-    // Parse YYYY-MM-DD manually to ensure it's treated as local date
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  const getDaysUntil = (dateStr: string) => {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day, 0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diff = Math.round((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diff === 0) return 'Today';
-    if (diff === 1) return 'Tomorrow';
-    if (diff === -1) return 'Yesterday';
-    if (diff < 0) return `${Math.abs(diff)} days ago`;
-    return `In ${diff} days`;
-  };
-
+  // Tap opens detail modal
   const handleTaskPress = (task: Task) => {
-    // Allow opening modal for all tasks (including completed ones)
     setSelectedTaskForDetail(task);
     setShowDetailModal(true);
   };
 
+  // Edit triggered from detail modal
   const handleEditFromDetail = () => {
     if (!selectedTaskForDetail) return;
-    setSelectedTask(selectedTaskForDetail); // Set selectedTask for context
+    setSelectedTask(selectedTaskForDetail);
     setShowDetailModal(false);
     handleEdit(selectedTaskForDetail);
   };
 
+  // Delete triggered from detail modal
   const handleDeleteFromDetail = () => {
     if (!selectedTaskForDetail) return;
-    Alert.alert(
-      'Delete Task',
-      'Are you sure you want to delete this task?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteTask(selectedTaskForDetail.id);
-            setShowDetailModal(false);
-            setSelectedTaskForDetail(null);
-          },
+    Alert.alert('Delete Task', 'Are you sure you want to delete this task?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          deleteTask(selectedTaskForDetail.id);
+          setShowDetailModal(false);
+          setSelectedTaskForDetail(null);
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  const renderTaskItem = ({ item: task }: { item: Task }) => {
-    const missed = isTaskMissed(task);
-
-    return (
-      <Pressable
-        style={[
-          styles.taskCard,
-          task.completed && styles.taskCardCompleted,
-          missed && { borderColor: '#FECACA', borderWidth: 1 } // Red border for missed
-        ]}
-        onPress={() => handleTaskPress(task)}
-        onLongPress={() => handleLongPress(task)}
-      >
-        <View style={styles.taskLeft}>
-          <TouchableOpacity
-            onPress={() => toggleTaskComplete(task)}
-            style={[styles.taskIcon, { backgroundColor: colors.taskColors[task.type] }]}
-            activeOpacity={0.7}
-          >
-            {task.completed ? (
-              <CheckCircle size={24} color={colors.surface} />
-            ) : (
-              <Circle size={24} color={colors.surface} />
-            )}
-          </TouchableOpacity>
-          <View style={styles.taskContent}>
-            <Text style={[styles.taskTitle, task.completed && styles.taskTitleCompleted]}>
-              {task.description}
-            </Text>
-            <View style={styles.taskMeta}>
-              <View style={[styles.typeBadge, { backgroundColor: colors.taskColors[task.type] + '20' }]}>
-                <Text style={[styles.typeBadgeText, { color: colors.taskColors[task.type] }]}>
-                  {task.type}
-                </Text>
-              </View>
-              {missed && (
-                <View style={[styles.typeBadge, { backgroundColor: '#FEE2E2', marginLeft: 6 }]}>
-                  <Text style={[styles.typeBadgeText, { color: '#EF4444' }]}>
-                    Missed
-                  </Text>
-                </View>
-              )}
-              {task.className && (
-                <Text style={styles.taskClass}>{task.className}</Text>
-              )}
-            </View>
-            <Text style={[styles.taskDate, missed && { color: '#EF4444' }]}>
-              {getDaysUntil(task.dueDate)} • {formatDate(task.dueDate)}
-              {task.dueTime && ` at ${formatStringTime12H(task.dueTime)}`}
-            </Text>
-          </View>
-        </View>
-        <View style={[styles.priorityDot, { backgroundColor: colors.priorityColors[task.priority] }]} />
-      </Pressable>
-    );
-  };
-  const { isTablet, normalize } = useResponsive();
-
-  // Pull-to-refresh handler
+  // Pull-to-refresh
   const onRefresh = async () => {
     setRefreshing(true);
     await refreshTasks();
     setRefreshing(false);
   };
 
+  // Close add/edit modal and clean up
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setIsEditing(false);
+    setSelectedTask(null);
+    resetForm();
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <ResponsiveContainer>
-      <FlatList
-        key={isTablet ? 'tablet' : 'mobile'}
-        numColumns={isTablet ? 2 : 1}
-        columnWrapperStyle={isTablet ? styles.columnWrapper : null}
-        data={filteredTasks}
-        renderItem={renderTaskItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={[styles.taskListContent, isTablet && { paddingHorizontal: 20 }]}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[colors.primary]}
-            tintColor={colors.primary}
-          />
-        }
-        ListHeaderComponent={
-          <>
-            <View style={styles.header}>
-              <View>
-                <Text style={styles.title}>My Tasks 📋</Text>
-                <Text style={styles.subtitle}>You have {filteredTasks.filter(t => !t.completed).length} tasks pending</Text>
+        <FlatList
+          key={isTablet ? 'tablet' : 'mobile'}
+          numColumns={isTablet ? 2 : 1}
+          columnWrapperStyle={isTablet ? styles.columnWrapper : null}
+          data={filteredTasks}
+          renderItem={({ item: task }) => (
+            <TaskCard
+              task={task}
+              onPress={handleTaskPress}
+              onLongPress={handleLongPress}
+              onToggleComplete={toggleTaskComplete}
+              isTaskMissed={isTaskMissed}
+              getDaysUntil={getDaysUntil}
+              formatDate={formatDate}
+            />
+          )}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={[
+            styles.taskListContent,
+            isTablet && { paddingHorizontal: 20 },
+          ]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
+          ListHeaderComponent={
+            <>
+              <View style={styles.header}>
+                <View>
+                  <Text style={styles.title}>My Tasks 📋</Text>
+                  <Text style={styles.subtitle}>
+                    You have {filteredTasks.filter((t) => !t.completed).length} tasks pending
+                  </Text>
+                </View>
+                <TouchableOpacity style={styles.addButton} onPress={() => setShowModal(true)}>
+                  <Plus size={24} color={colors.surface} />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity style={styles.addButton} onPress={() => setShowModal(true)}>
-                <Plus size={24} color={colors.surface} />
-              </TouchableOpacity>
-            </View>
 
-
-            {showPersistentBanner && (
-              <View style={styles.persistentBanner}>
-                <View style={styles.persistentBannerTop}>
-                  <Text style={styles.persistentBannerIcon}>🔔</Text>
-                  <View style={styles.persistentBannerTextBlock}>
-                    <Text style={styles.persistentBannerTitle}>Action needed for alarms</Text>
-                    <Text style={styles.persistentBannerBody}>
-                      To keep alarm banners on screen, go to{' '}
-                      <Text style={styles.persistentBannerBold}>Settings → Notifications → Cause Planner → Banner Style</Text>
-                      {' '}and select{' '}
-                      <Text style={styles.persistentBannerBold}>Persistent</Text>.
-                    </Text>
+              {showPersistentBanner && (
+                <View style={styles.persistentBanner}>
+                  <View style={styles.persistentBannerTop}>
+                    <Text style={styles.persistentBannerIcon}>🔔</Text>
+                    <View style={styles.persistentBannerTextBlock}>
+                      <Text style={styles.persistentBannerTitle}>Action needed for alarms</Text>
+                      <Text style={styles.persistentBannerBody}>
+                        To keep alarm banners on screen, go to{' '}
+                        <Text style={styles.persistentBannerBold}>
+                          Settings → Notifications → Cause Planner → Banner Style
+                        </Text>
+                        {' '}and select{' '}
+                        <Text style={styles.persistentBannerBold}>Persistent</Text>.
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.persistentBannerActions}>
+                    <TouchableOpacity
+                      style={styles.persistentBannerPrimaryBtn}
+                      onPress={() => Linking.openSettings()}
+                    >
+                      <Text style={styles.persistentBannerPrimaryBtnText}>Open Settings</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.persistentBannerSecondaryBtn}
+                      onPress={async () => {
+                        await AsyncStorage.setItem(IOS_PERSISTENT_BANNER_KEY, 'true');
+                        setShowPersistentBanner(false);
+                      }}
+                    >
+                      <Text style={styles.persistentBannerSecondaryBtnText}>Done, I've set it ✓</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
-                <View style={styles.persistentBannerActions}>
-                  <TouchableOpacity
-                    style={styles.persistentBannerPrimaryBtn}
-                    onPress={() => Linking.openSettings()}
-                  >
-                    <Text style={styles.persistentBannerPrimaryBtnText}>Open Settings</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.persistentBannerSecondaryBtn}
-                    onPress={async () => {
-                      await AsyncStorage.setItem(IOS_PERSISTENT_BANNER_KEY, 'true');
-                      setShowPersistentBanner(false);
-                    }}
-                  >
-                    <Text style={styles.persistentBannerSecondaryBtnText}>Done, I've set it ✓</Text>
-                  </TouchableOpacity>
-                </View>
+              )}
+
+              <View style={styles.searchContainer}>
+                <SearchBar
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search tasks..."
+                />
               </View>
-            )}
 
-            <View style={styles.searchContainer}>
-              <SearchBar
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Search tasks..."
-              />
+              <View style={styles.filtersContainer}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filtersScroll}
+                >
+                  {['all', 'active', 'missed', 'completed'].map((f) => (
+                    <TouchableOpacity
+                      key={f}
+                      style={[styles.filterChip, activeFilter === f && styles.filterChipActive]}
+                      onPress={() => setActiveFilter(f as typeof activeFilter)}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipText,
+                          activeFilter === f && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {f.charAt(0).toUpperCase() + f.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  <View style={styles.filterDivider} />
+                  {taskTypes.map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[styles.filterChip, activeFilter === type && styles.filterChipActive]}
+                      onPress={() => setActiveFilter(type)}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipText,
+                          activeFilter === type && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            </>
+          }
+          ListEmptyComponent={() => (
+            <View style={styles.emptyState}>
+              <Mascot size={80} />
+              <Text style={styles.emptyText}>
+                {searchQuery || activeFilter !== 'all'
+                  ? 'No tasks match your filters'
+                  : 'No tasks yet'}
+              </Text>
+              <Text style={styles.emptySubtext}>
+                {searchQuery || activeFilter !== 'all'
+                  ? 'Try adjusting your search or filters'
+                  : 'Tap the + button to create your first task'}
+              </Text>
             </View>
-
-            <View style={styles.filtersContainer}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersScroll}>
-                <TouchableOpacity
-                  style={[styles.filterChip, activeFilter === 'all' && styles.filterChipActive]}
-                  onPress={() => setActiveFilter('all')}
-                >
-                  <Text style={[styles.filterChipText, activeFilter === 'all' && styles.filterChipTextActive]}>All</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.filterChip, activeFilter === 'active' && styles.filterChipActive]}
-                  onPress={() => setActiveFilter('active')}
-                >
-                  <Text style={[styles.filterChipText, activeFilter === 'active' && styles.filterChipTextActive]}>Active</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.filterChip, activeFilter === 'missed' && styles.filterChipActive]}
-                  onPress={() => setActiveFilter('missed')}
-                >
-                  <Text style={[styles.filterChipText, activeFilter === 'missed' && styles.filterChipTextActive]}>Missed</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.filterChip, activeFilter === 'completed' && styles.filterChipActive]}
-                  onPress={() => setActiveFilter('completed')}
-                >
-                  <Text style={[styles.filterChipText, activeFilter === 'completed' && styles.filterChipTextActive]}>Completed</Text>
-                </TouchableOpacity>
-                <View style={styles.filterDivider} />
-                {taskTypes.map((type) => (
-                  <TouchableOpacity
-                    key={type}
-                    style={[styles.filterChip, activeFilter === type && styles.filterChipActive]}
-                    onPress={() => setActiveFilter(type)}
-                  >
-                    <Text style={[styles.filterChipText, activeFilter === type && styles.filterChipTextActive]}>
-                      {type.charAt(0).toUpperCase() + type.slice(1)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </>
-        }
-        ListEmptyComponent={() => (
-          <View style={styles.emptyState}>
-            <Mascot size={80} />
-            <Text style={styles.emptyText}>
-              {searchQuery || activeFilter !== 'all'
-                ? 'No tasks match your filters'
-                : 'No tasks yet'}
-            </Text>
-            <Text style={styles.emptySubtext}>
-              {searchQuery || activeFilter !== 'all'
-                ? 'Try adjusting your search or filters'
-                : 'Tap the + button to create your first task'}
-            </Text>
-          </View>
-        )}
-        showsVerticalScrollIndicator={false}
-      />
+          )}
+          showsVerticalScrollIndicator={false}
+        />
       </ResponsiveContainer>
 
-      <Modal visible={showModal} transparent animationType="fade" onRequestClose={() => setShowModal(false)}>
-        <SafeAreaView style={styles.safeAreaModal}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.keyboardAvoidingView}
-          >
-            <TouchableOpacity
-              style={styles.modalOverlay}
-              activeOpacity={1}
-              onPress={() => setShowModal(false)}
-            >
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={(e) => e.stopPropagation()}
-                style={{ width: '100%', alignItems: 'center' }}
-              >
-                <Animated.View style={[
-                  styles.modalContent, 
-                  { transform: [{ scale: scaleAnim }] },
-                  isTablet && styles.modalContentTablet
-                ]}>
-                  <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>{isEditing ? 'Edit Task' : 'Create Task'}</Text>
-                    <TouchableOpacity onPress={() => {
-                      setShowModal(false);
-                      setIsEditing(false);
-                      setSelectedTask(null);
-                      resetForm();
-                    }}>
-                      <X size={24} color={colors.text} />
-                    </TouchableOpacity>
-                  </View>
+      <AddEditTaskModal
+        visible={showModal}
+        isEditing={isEditing}
+        isTablet={isTablet}
+        scaleAnim={scaleAnim}
+        description={description}
+        taskType={taskType}
+        selectedClass={selectedClass}
+        dueDate={dueDate}
+        dueTime={dueTime}
+        priority={priority}
+        reminder={reminder}
+        customReminderDate={customReminderDate}
+        alarmEnabled={alarmEnabled}
+        repeat={repeat}
+        showDatePicker={showDatePicker}
+        showTimePicker={showTimePicker}
+        showCustomReminderPicker={showCustomReminderPicker}
+        classes={classes}
+        taskTypes={taskTypes}
+        priorities={priorities}
+        reminders={reminders}
+        reminderLabel={reminderLabel}
+        onClose={handleCloseModal}
+        onSubmit={handleAddTask}
+        onNavigateToClasses={() => {
+          setShowModal(false);
+          router.push('/(tabs)/classes');
+        }}
+        onChangeDescription={setDescription}
+        onChangeTaskType={setTaskType}
+        onChangeSelectedClass={setSelectedClass}
+        onChangeDueDate={setDueDate}
+        onChangeDueTime={setDueTime}
+        onChangePriority={setPriority}
+        onChangeReminder={setReminder}
+        onChangeCustomReminderDate={setCustomReminderDate}
+        onChangeAlarmEnabled={setAlarmEnabled}
+        onChangeRepeat={setRepeat}
+        onSetShowDatePicker={setShowDatePicker}
+        onSetShowTimePicker={setShowTimePicker}
+        onSetShowCustomReminderPicker={setShowCustomReminderPicker}
+        onShowPersistentBanner={() => setShowPersistentBanner(true)}
+      />
 
-                  <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
-                    <Text style={styles.label}>Description *</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Enter task description"
-                      placeholderTextColor={colors.textLight}
-                      value={description}
-                      onChangeText={setDescription}
-                    />
-
-                    <Text style={styles.label}>Type *</Text>
-                    <View style={styles.optionGrid}>
-                      {taskTypes.map((type) => (
-                        <TouchableOpacity
-                          key={type}
-                          style={[
-                            styles.optionChip,
-                            taskType === type && { backgroundColor: colors.taskColors[type] },
-                          ]}
-                          onPress={() => setTaskType(type)}
-                        >
-                          <Text
-                            style={[
-                              styles.optionChipText,
-                              taskType === type && { color: colors.surface },
-                            ]}
-                          >
-                            {type}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    <Text style={styles.label}>Class</Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setShowModal(false);
-                        router.push('/(tabs)/classes');
-                      }}
-                      style={styles.helperNote}
-                    >
-                      <Text style={styles.helperNoteText}>
-                        Don't see your class? Click{' '}
-                        <Text style={styles.helperNoteLink}>HERE</Text>
-                        {' '}to create a class.
-                      </Text>
-                    </TouchableOpacity>
-                    <View style={styles.optionGrid}>
-                      <TouchableOpacity
-                        style={[
-                          styles.optionChip,
-                          !selectedClass && { backgroundColor: colors.primary },
-                        ]}
-                        onPress={() => setSelectedClass('')}
-                      >
-                        <Text
-                          style={[
-                            styles.optionChipText,
-                            !selectedClass && { color: colors.surface },
-                          ]}
-                        >
-                          None
-                        </Text>
-                      </TouchableOpacity>
-                      {classes.map((cls) => (
-                        <TouchableOpacity
-                          key={cls.id}
-                          style={[
-                            styles.optionChip,
-                            selectedClass === cls.name && { backgroundColor: cls.color },
-                          ]}
-                          onPress={() => setSelectedClass(cls.name)}
-                        >
-                          <Text
-                            style={[
-                              styles.optionChipText,
-                              selectedClass === cls.name && { color: colors.surface },
-                            ]}
-                          >
-                            {cls.name}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    <Text style={styles.label}>Due Date *</Text>
-                    <TouchableOpacity
-                      style={styles.input}
-                      onPress={() => setShowDatePicker(true)}
-                    >
-                      <Text style={styles.inputText}>
-                        {dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                      </Text>
-                    </TouchableOpacity>
-                    <DateTimePickerModal
-                      isVisible={showDatePicker}
-                      mode="date"
-                      date={dueDate}
-                      onConfirm={(date) => {
-                        setShowDatePicker(false);
-                        // Picker returns midnight LOCAL time — use local date components so
-                        // getFullYear/Month/Date() give exactly the day the user tapped.
-                        // Using UTC components here would give the previous day for UTC+
-                        // timezones (e.g. Nigeria WAT+1: midnight local = 11 PM UTC prior day).
-                        const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0);
-                        setDueDate(normalized);
-                      }}
-                      onCancel={() => setShowDatePicker(false)}
-                    />
-
-                    <Text style={styles.label}>Due Time</Text>
-                    <TouchableOpacity
-                      style={styles.input}
-                      onPress={() => setShowTimePicker(true)}
-                    >
-                      <Text style={styles.inputText}>
-                        {formatTime12H(dueTime)}
-                      </Text>
-                    </TouchableOpacity>
-                    <DateTimePickerModal
-                      isVisible={showTimePicker}
-                      mode="time"
-                      date={dueTime}
-                      onConfirm={(time) => {
-                        setShowTimePicker(false);
-                        setDueTime(time);
-                      }}
-                      onCancel={() => setShowTimePicker(false)}
-                    />
-
-                    <Text style={styles.label}>Priority</Text>
-                    <View style={styles.optionGrid}>
-                      {priorities.map((p) => (
-                        <TouchableOpacity
-                          key={p}
-                          style={[
-                            styles.optionChip,
-                            priority === p && { backgroundColor: colors.priorityColors[p] },
-                          ]}
-                          onPress={() => setPriority(p)}
-                        >
-                          <Text
-                            style={[
-                              styles.optionChipText,
-                              priority === p && { color: colors.surface },
-                            ]}
-                          >
-                            {p}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    <Text style={styles.label}>Reminder</Text>
-                    <View style={styles.optionGrid}>
-                      {reminders.map((r) => (
-                        <TouchableOpacity
-                          key={r}
-                          style={[
-                            styles.optionChip,
-                            reminder === r && { backgroundColor: colors.primary },
-                          ]}
-                          onPress={() => {
-                            setReminder(r);
-                            if (r === 'custom') {
-                              // Set minimum date to current time + 1 minute
-                              const minDate = new Date();
-                              minDate.setMinutes(minDate.getMinutes() + 1);
-                              setCustomReminderDate(minDate);
-                              setShowCustomReminderPicker(true);
-                            }
-                          }}
-                        >
-                          <Text
-                            style={[
-                              styles.optionChipText,
-                              reminder === r && { color: colors.surface },
-                            ]}
-                          >
-                            {reminderLabel[r]}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    {reminder === 'custom' && (
-                      <TouchableOpacity
-                        style={[styles.input, { marginTop: 8 }]}
-                        onPress={() => setShowCustomReminderPicker(true)}
-                      >
-                        <Text style={styles.inputText}>
-                          {customReminderDate.toLocaleString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                    <DateTimePickerModal
-                      isVisible={showCustomReminderPicker}
-                      mode="datetime"
-                      date={customReminderDate}
-                      minimumDate={new Date()}
-                      onConfirm={(date) => {
-                        if (date > new Date()) {
-                          setShowCustomReminderPicker(false);
-                          setCustomReminderDate(date);
-                        } else {
-                          setShowCustomReminderPicker(false);
-                          Alert.alert(
-                            'Invalid Date',
-                            'Reminder must be set for a future date and time.',
-                            [{ text: 'OK' }]
-                          );
-                        }
-                      }}
-                      onCancel={() => setShowCustomReminderPicker(false)}
-                    />
-
-                    <Text style={styles.label}>Repeat</Text>
-                    <View style={styles.optionGrid}>
-                      {['none', 'daily'].map((r) => (
-                        <TouchableOpacity
-                          key={r}
-                          style={[
-                            styles.optionChip,
-                            repeat === r && { backgroundColor: colors.primary },
-                          ]}
-                          onPress={() => setRepeat(r)}
-                        >
-                          <Text
-                            style={[
-                              styles.optionChipText,
-                              repeat === r && { color: colors.surface },
-                            ]}
-                          >
-                            {r.charAt(0).toUpperCase() + r.slice(1)}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    <TouchableOpacity
-                      style={[styles.checkboxRow, alarmEnabled && styles.checkboxRowActive]}
-                      onPress={async () => {
-                        const next = !alarmEnabled;
-                        setAlarmEnabled(next);
-                        if (next && Platform.OS === 'ios') {
-                          const confirmed = await AsyncStorage.getItem(IOS_PERSISTENT_BANNER_KEY);
-                          if (!confirmed) setShowPersistentBanner(true);
-                        }
-                      }}
-                    >
-                      <View style={[styles.checkbox, alarmEnabled && styles.checkboxChecked]}>
-                        {alarmEnabled && <CheckCircle size={20} color={colors.surface} />}
-                      </View>
-                      <Text style={styles.checkboxLabel}>Enable alarm sound</Text>
-                    </TouchableOpacity>
-
-                    <Button
-                      title={isEditing ? 'Update Task' : 'Create Task'}
-                      onPress={handleAddTask}
-                      disabled={!description}
-                      style={styles.createButton}
-                    />
-                  </ScrollView>
-                </Animated.View>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* Action Sheet Modal */}
-
-      {/* Task Detail Modal */}
-      <Modal
+      <TaskDetailModal
         visible={showDetailModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDetailModal(false)}
-      >
-        <SafeAreaView style={styles.safeAreaModal}>
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowDetailModal(false)}
-          >
-            <TouchableOpacity
-              activeOpacity={1}
-              onPress={(e) => e.stopPropagation()}
-              style={{ width: '100%', alignItems: 'center' }}
-            >
-              <Animated.View style={[styles.modalContent, { transform: [{ scale: detailScaleAnim }] }]}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Task Details</Text>
-                  <TouchableOpacity onPress={() => setShowDetailModal(false)}>
-                    <X size={24} color={colors.text} />
-                  </TouchableOpacity>
-                </View>
+        task={selectedTaskForDetail}
+        detailScaleAnim={detailScaleAnim}
+        formatDate={formatDate}
+        onClose={() => setShowDetailModal(false)}
+        onToggleComplete={toggleTaskComplete}
+        onEdit={handleEditFromDetail}
+        onDelete={handleDeleteFromDetail}
+      />
 
-                <ScrollView
-                  showsVerticalScrollIndicator={true}
-                  contentContainerStyle={styles.modalScrollContent}
-                  style={{ maxHeight: Dimensions.get('window').height * 0.5 }}
-                >
-                  {/* Task Description */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Description</Text>
-                    <Text style={styles.detailValue}>{selectedTaskForDetail?.description}</Text>
-                  </View>
-
-                  {/* Type */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Type</Text>
-                    <View style={[styles.typeBadge, { backgroundColor: selectedTaskForDetail ? colors.taskColors[selectedTaskForDetail.type] + '20' : colors.background }]}>
-                      <Text style={[styles.typeBadgeText, { color: selectedTaskForDetail ? colors.taskColors[selectedTaskForDetail.type] : colors.text }]}>
-                        {selectedTaskForDetail?.type}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Class */}
-                  {selectedTaskForDetail?.className && (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.detailLabel}>Class</Text>
-                      <Text style={styles.detailValue}>{selectedTaskForDetail.className}</Text>
-                    </View>
-                  )}
-
-                  {/* Due Date & Time */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Due Date</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedTaskForDetail && formatDate(selectedTaskForDetail.dueDate)}
-                      {selectedTaskForDetail?.dueTime && ` at ${formatStringTime12H(selectedTaskForDetail.dueTime)}`}
-                    </Text>
-                  </View>
-
-                  {/* Priority */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Priority</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <View style={[styles.priorityDot, { backgroundColor: selectedTaskForDetail ? colors.priorityColors[selectedTaskForDetail.priority] : colors.background }]} />
-                      <Text style={[styles.detailValue, { textTransform: 'capitalize' }]}>
-                        {selectedTaskForDetail?.priority}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Reminder */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Reminder</Text>
-                    <Text style={styles.detailValue}>
-                      {(!selectedTaskForDetail?.reminder || selectedTaskForDetail?.reminder === 'none') && 'No reminder'}
-                      {selectedTaskForDetail?.reminder === '1h' && '1 hour before'}
-                      {selectedTaskForDetail?.reminder === '2h' && '2 hours before'}
-                      {selectedTaskForDetail?.reminder === '1d' && '1 day before'}
-                      {selectedTaskForDetail?.reminder === '2d' && '2 days before'}
-                      {selectedTaskForDetail?.reminder === 'custom' && 'Custom reminder'}
-                    </Text>
-                  </View>
-
-                  {/* Alarm */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Alarm</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedTaskForDetail?.alarmEnabled ? 'Enabled' : 'Disabled'}
-                    </Text>
-                  </View>
-
-                  {/* Status */}
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailLabel}>Status</Text>
-                    <Text style={[styles.detailValue, { color: selectedTaskForDetail?.completed ? colors.success : colors.textSecondary }]}>
-                      {selectedTaskForDetail?.completed ? 'Completed' : 'Pending'}
-                    </Text>
-                  </View>
-                </ScrollView>
-
-                {/* Action Buttons */}
-                <View style={styles.detailActions}>
-                  <TouchableOpacity
-                    style={[styles.detailButton, styles.toggleButton]}
-                    onPress={() => {
-                      if (selectedTaskForDetail) {
-                        toggleTaskComplete(selectedTaskForDetail);
-                        setShowDetailModal(false);
-                      }
-                    }}
-                  >
-                    <Text style={styles.detailButtonText}>
-                      Mark as {selectedTaskForDetail?.completed ? 'Incomplete' : 'Complete'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.detailButton, styles.editButton]}
-                    onPress={handleEditFromDetail}
-                  >
-                    <Edit2 size={18} color={colors.surface} />
-                    <Text style={styles.detailButtonText}>Edit</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.detailButton, styles.deleteButton]}
-                    onPress={handleDeleteFromDetail}
-                  >
-                    <Trash2 size={18} color={colors.surface} />
-                    <Text style={styles.detailButtonText}>Delete</Text>
-                  </TouchableOpacity>
-                </View>
-              </Animated.View>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </SafeAreaView>
-      </Modal>
-
-      {/* Action Sheet Modal */}
-      <Modal
+      <TaskActionSheet
         visible={showActionSheet}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowActionSheet(false)}
-      >
-        <SafeAreaView style={styles.safeAreaModal}>
-          <TouchableOpacity
-            style={styles.actionSheetOverlay}
-            activeOpacity={1}
-            onPress={() => setShowActionSheet(false)}
-          >
-            <View style={styles.actionSheetContent}>
-              <TouchableOpacity style={styles.actionButton} onPress={() => handleEdit()}>
-                <Edit2 size={20} color={colors.primary} />
-                <Text style={styles.actionButtonText}>Edit Task</Text>
-              </TouchableOpacity>
-              <View style={styles.actionDivider} />
-              <TouchableOpacity style={styles.actionButton} onPress={handleDelete}>
-                <Trash2 size={20} color="#FF3B30" />
-                <Text style={[styles.actionButtonText, { color: '#FF3B30' }]}>Delete Task</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </SafeAreaView>
-      </Modal>
-
+        onClose={() => setShowActionSheet(false)}
+        onEdit={() => handleEdit()}
+        onDelete={handleDelete}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeAreaModal: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1100,23 +623,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
-    alignSelf: "flex-end"
-  },
-  scrollView: {
-    flex: 1,
+    alignSelf: 'flex-end',
   },
   taskListContent: {
     paddingHorizontal: 20,
     paddingBottom: 100,
   },
-  footerLoader: {
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  footerText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: colors.textSecondary,
+  columnWrapper: {
+    justifyContent: 'space-between',
+    gap: 12,
   },
   emptyState: {
     alignItems: 'center',
@@ -1132,226 +647,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textLight,
     marginTop: 8,
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  taskList: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-  },
-  taskCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: colors.cardShadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-    flex: 1, // Ensure card grows in grid
-  },
-  taskCardCompleted: {
-    opacity: 0.6,
-  },
-  taskLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  taskIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  taskContent: {
-    flex: 1,
-  },
-  taskTitle: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: colors.text,
-    marginBottom: 6,
-  },
-  taskTitleCompleted: {
-    textDecorationLine: 'line-through',
-    color: colors.textSecondary,
-  },
-  taskMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  typeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  typeBadgeText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-    textTransform: 'capitalize',
-  },
-  taskClass: {
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  taskDate: {
-    fontSize: 12,
-    color: colors.textLight,
-  },
-  priorityDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginLeft: 12,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: colors.surface,
-    borderRadius: 24,
-    padding: 24,
-    width: '90%',
-    maxHeight: '90%',
-  },
-  modalContentTablet: {
-    width: 600,
-    maxWidth: '80%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: '700' as const,
-    color: colors.text,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: colors.text,
-    marginBottom: 8,
-    marginTop: 16,
-  },
-  input: {
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inputText: {
-    fontSize: 16,
-    color: colors.text,
-  },
-  optionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  optionChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  optionChipText: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: colors.text,
-    textTransform: 'capitalize',
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    marginTop: 16,
-  },
-  checkboxRowActive: {
-    opacity: 1,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.border,
-    marginRight: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  checkboxLabel: {
-    fontSize: 14,
-    color: colors.text,
-    fontWeight: '500' as const,
-  },
-  createButton: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginTop: 24,
-    marginBottom: 8,
-  },
-  createButtonDisabled: {
-    opacity: 0.5,
-  },
-  createButtonText: {
-    fontSize: 16,
-    fontWeight: '700' as const,
-    color: colors.surface,
-  },
-  actionSheetOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  actionSheetContent: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 40,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    gap: 12,
-  },
-  actionButtonText: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: colors.text,
-  },
-  actionDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginHorizontal: 20,
   },
   searchContainer: {
     paddingBottom: 12,
@@ -1387,70 +682,6 @@ const styles = StyleSheet.create({
     height: 24,
     backgroundColor: colors.border,
     marginHorizontal: 4,
-  },
-  keyboardAvoidingView: {
-    flex: 1,
-  },
-  helperNote: {
-    marginBottom: 8,
-    paddingVertical: 6,
-  },
-  helperNoteText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
-  },
-  helperNoteLink: {
-    color: colors.primary,
-    fontWeight: '600' as const,
-    textDecorationLine: 'underline',
-  },
-  modalScrollContent: {
-    paddingBottom: 20,
-  },
-  detailSection: {
-    marginBottom: 20,
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: colors.textSecondary,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-  },
-  detailValue: {
-    fontSize: 16,
-    color: colors.text,
-    lineHeight: 24,
-  },
-  detailActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 24,
-  },
-  detailButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 8,
-    paddingHorizontal: 10
-  },
-  toggleButton: {
-    backgroundColor: colors.primary,
-  },
-  editButton: {
-    backgroundColor: colors.primary,
-  },
-  deleteButton: {
-    backgroundColor: colors.error || '#ef4444',
-  },
-  detailButtonText: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: colors.surface,
   },
   // ── iOS persistent banner ──────────────────────────────────────────────────
   persistentBanner: {

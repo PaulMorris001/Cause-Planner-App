@@ -14,7 +14,7 @@ class OfflineQueueService {
 	private isOnline: boolean = true;
 	private listeners: ((isOnline: boolean) => void)[] = [];
 	private processingQueue: boolean = false;
-	private networkCheckInterval: NodeJS.Timeout | null = null;
+	private networkCheckInterval: ReturnType<typeof setInterval> | null = null;
 	private readonly QUEUE_KEY = '@offline_queue';
 	private readonly MAX_RETRIES = 5;
 	private readonly MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours

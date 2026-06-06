@@ -34,7 +34,7 @@ export default function InviteScreen() {
 
         setIsJoining(true);
         try {
-            const result = await joinStudyGroup(code, user.email || "");
+            const result = await joinStudyGroup(code, user.email || "", user.name || user.email || "");
             if (result) {
                 Alert.alert("Success", "You have joined the group!", [
                     { text: "View Groups", onPress: () => router.replace("/(tabs)/study-groups") }
