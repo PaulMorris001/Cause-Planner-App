@@ -7,7 +7,7 @@ import * as Updates from "expo-updates";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { View, TouchableOpacity, StyleSheet, Modal, Text, ScrollView, Pressable, StatusBar, Image, Platform, InteractionManager, Animated, AppState, AppStateStatus, Alert } from "react-native";
-import { Menu, CheckSquare, Calendar, Target, FileText, BookOpen, Heart, Sparkles, User, Home, X, WifiOff } from "lucide-react-native";
+import { Menu, CheckSquare, Calendar, Target, FileText, BookOpen, Heart, Sparkles, User, Home, X, WifiOff, HeartPulse, Users } from "lucide-react-native";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { StreakProvider } from "@/contexts/StreakContext";
@@ -40,6 +40,8 @@ function MenuButton() {
     { label: 'Goals', icon: Target, route: '/goals' },
     { label: 'Notes', icon: FileText, route: '/notes' },
     { label: 'AI Buddy', icon: Sparkles, route: '/ai-buddy' },
+    { label: 'Wellness Center', icon: HeartPulse, route: '/wellness-center' },
+    { label: 'Study Group', icon: Users, route: '/study-group' },
     { label: 'Causes', icon: Heart, route: '/causes' },
   ];
 
@@ -525,9 +527,19 @@ function RootLayoutNav() {
         }}
       />
       <Stack.Screen
-        name="payment"
+        name="wellness-center"
         options={{
-          headerShown: false,
+          headerShown: true,
+          title: "Wellness Center",
+          headerBackTitle: "Back",
+        }}
+      />
+      <Stack.Screen
+        name="study-group"
+        options={{
+          headerShown: true,
+          title: "Study Group",
+          headerBackTitle: "Back",
         }}
       />
       <Stack.Screen
